@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  r1q2-arena:
+    build:
+      context: /home/quake2/quake2
+      dockerfile: /home/nils/projects/q2server-dockerfile/Dockerfile
+    image: r1q2-arena
+    environment:
+      Q2_EXECUTEABLE: 'r1q2ded-old'
+      Q2_GAMEDIR: 'arena'
+      Q2_IP: 'localhost'
+      Q2_PORT: '27910'
+    restart: always
+    ports:
+    - "27910:27910/udp"
+    - "27910:27910/tcp"
+  r1q2-xatrix:
+    build:
+      context: /home/quake2/quake2
+      dockerfile: /home/nils/projects/q2server-dockerfile/Dockerfile
+    image: r1q2-xatrix
+    environment:
+      Q2_EXECUTEABLE: 'r1q2ded'
+      Q2_GAMEDIR: 'xatrix'
+      Q2_IP: 'localhost'
+      Q2_PORT: '27911'
+    restart: always
+    ports:
+    - "27911:27911/udp"
+    - "27911:27911/tcp"
