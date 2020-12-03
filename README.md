@@ -1,6 +1,6 @@
 Build Docker Image:
 
-    cd /home/quake2/quake2
+    cd /home/nils/quake2
     docker build -t r1q2-arena -f /home/nils/projects/q2server-dockerfile/Dockerfile .
 
 Run Docker Container in interactive mode:
