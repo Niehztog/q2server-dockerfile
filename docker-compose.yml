@@ -3,7 +3,7 @@ version: '3.8'
 services:
   r1q2-arena:
     build:
-      context: /home/quake2/quake2
+      context: /home/nils/quake2
       dockerfile: /home/nils/projects/q2server-dockerfile/Dockerfile
     image: r1q2-arena
     environment:
@@ -17,7 +17,7 @@ services:
     - "27910:27910/tcp"
   r1q2-xatrix:
     build:
-      context: /home/quake2/quake2
+      context: /home/nils/quake2
       dockerfile: /home/nils/projects/q2server-dockerfile/Dockerfile
     image: r1q2-xatrix
     environment:

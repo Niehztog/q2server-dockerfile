@@ -1,0 +1,65 @@
+FROM debian:stable-slim as builder
+
+RUN apt-get update && \
+    apt-get install -y \
+        git \
+        build-essential \
+        zlib1g-dev \
+        pkg-config \
+        libglib2.0-dev
+#        libcurl4-gnutls-dev \
+#        libsdl2-dev \
+#        libgl1-mesa-dev \
+#        libopenal-dev
+
+RUN git clone https://github.com/tastyspleen/r1q2-archive && \
+    git clone https://github.com/packetflinger/openra2.git
+    
+WORKDIR /r1q2-archive/binaries
+RUN bash -c "mkdir -p {r1q2ded,client,game,ref_gl}/.depends" && \
+    make r1q2ded && \
+    ls -al r1q2ded/r1q2ded
+
+WORKDIR /openra2
+RUN make && \
+    ls -al *.so
+
+FROM debian:stable-slim
+
+# ENV Q2_EXECUTEABLE="r1q2ded-old"
+ENV Q2_GAMEDIR="arena"
+ENV Q2_IP="localhost"
+ENV Q2_PORT="27912"
+
+RUN apt-get update && \
+    apt-get install -y \
+        libglib2.0-0
+
+RUN groupadd -r quake2 && \
+    useradd -r -g quake2 -s /sbin/nologin -M quake2
+
+RUN mkdir -p /opt/quake2
+COPY --chown=quake2:quake2 . /opt/quake2/
+    
+COPY --from=builder /r1q2-archive/binaries/r1q2ded/r1q2ded \
+                    /opt/quake2/r1q2ded
+COPY --from=builder /openra2/gamex86_64.so \
+                    /opt/quake2/arena/gamex86_64.so
+
+# EXPOSE 27912/udp
+
+USER quake2
+
+WORKDIR /opt/quake2
+
+CMD /usr/bin/stdbuf -oL /opt/quake2/r1q2ded \
++set dedicated 1 \
++set game "$Q2_GAMEDIR" \
++set ip "$Q2_IP" \
++set port "$Q2_PORT" \
++exec server1.cfg
+
+
+
+
+
