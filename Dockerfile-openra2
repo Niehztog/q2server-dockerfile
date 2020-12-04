@@ -7,13 +7,10 @@ RUN apt-get update && \
         zlib1g-dev \
         pkg-config \
         libglib2.0-dev
-#        libcurl4-gnutls-dev \
-#        libsdl2-dev \
-#        libgl1-mesa-dev \
-#        libopenal-dev
 
 RUN git clone https://github.com/tastyspleen/r1q2-archive && \
-    git clone https://github.com/packetflinger/openra2.git
+    git clone https://github.com/packetflinger/openra2.git && \
+    git clone https://github.com/tastyspleen/q2admin-tsmod.git
     
 WORKDIR /r1q2-archive/binaries
 RUN bash -c "mkdir -p {r1q2ded,client,game,ref_gl}/.depends" && \
@@ -21,6 +18,10 @@ RUN bash -c "mkdir -p {r1q2ded,client,game,ref_gl}/.depends" && \
     ls -al r1q2ded/r1q2ded
 
 WORKDIR /openra2
+RUN make && \
+    ls -al *.so
+    
+WORKDIR /q2admin-tsmod
 RUN make && \
     ls -al *.so
 
@@ -44,6 +45,8 @@ COPY --chown=quake2:quake2 . /opt/quake2/
 COPY --from=builder /r1q2-archive/binaries/r1q2ded/r1q2ded \
                     /opt/quake2/r1q2ded
 COPY --from=builder /openra2/gamex86_64.so \
+                    /opt/quake2/arena/gamex86_64.real.so
+COPY --from=builder /q2admin-tsmod/gamex86_64.so \
                     /opt/quake2/arena/gamex86_64.so
 
 # EXPOSE 27912/udp
