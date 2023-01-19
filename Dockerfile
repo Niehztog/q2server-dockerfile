@@ -1,4 +1,4 @@
-FROM debian:stable-slim
+FROM debian:buster-slim
 
 ENV Q2_EXECUTEABLE="r1q2ded-old"
 ENV Q2_GAMEDIR="arena"
