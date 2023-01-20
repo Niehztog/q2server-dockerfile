@@ -1,9 +1,8 @@
 FROM debian:buster-slim
 
 RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections && \
-    dpkg --add-architecture i386 && \
     apt-get update && \
-    apt-get install -y --allow-remove-essential curl multiarch-support coreutils:i386 libc6:i386 libncurses5:i386 libstdc++6:i386 zlib1g:i386 && \
+    apt-get install -y --allow-remove-essential curl && \
     apt-get -y autoclean && \
     apt-get -y autoremove && \
     rm -rf \
@@ -32,6 +31,7 @@ VOLUME /opt/daikatana/data
 # EXPOSE 27910/udp
 
 WORKDIR /opt/daikatana
+ENV XDG_DATA_HOME=/opt/daikatana
 
 CMD /opt/daikatana/dkded \
 +exec coop.cfg
