@@ -1,0 +1,39 @@
+FROM debian:buster-slim
+
+RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections && \
+    dpkg --add-architecture i386 && \
+    apt-get update && \
+    apt-get install -y --allow-remove-essential curl multiarch-support coreutils:i386 libc6:i386 libncurses5:i386 libstdc++6:i386 zlib1g:i386 && \
+    apt-get -y autoclean && \
+    apt-get -y autoremove && \
+    rm -rf \
+        /var/lib/apt/lists/* \
+        /tmp/* \
+        /var/tmp/* \
+        /usr/share/locale/* \
+        /var/cache/debconf/*-old \
+        /var/lib/apt/lists/* \
+        /usr/share/doc/*
+
+RUN groupadd -r -g 1000 daikatana && \
+    useradd -r -g daikatana -u 1000 -s /sbin/nologin -M daikatana
+
+RUN mkdir -p /opt/daikatana
+COPY --chown=daikatana:daikatana . /opt/daikatana/
+
+USER daikatana:daikatana
+
+RUN chown -R daikatana:daikatana /opt/daikatana/data
+RUN chmod 755 /opt/daikatana/data
+
+VOLUME /opt/daikatana/data
+
+# EXPOSE 27910/tcp
+# EXPOSE 27910/udp
+
+WORKDIR /opt/daikatana
+
+CMD /opt/daikatana/dkded \
++exec coop.cfg
+
+
