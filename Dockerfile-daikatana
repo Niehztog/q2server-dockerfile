@@ -1,8 +1,8 @@
-FROM debian:buster-slim
+FROM debian:trixie-slim
 
 RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections && \
     apt-get update && \
-    apt-get install -y --allow-remove-essential curl && \
+    apt-get install -y --no-install-recommends curl && \
     apt-get -y autoclean && \
     apt-get -y autoremove && \
     rm -rf \
@@ -11,7 +11,6 @@ RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selectio
         /var/tmp/* \
         /usr/share/locale/* \
         /var/cache/debconf/*-old \
-        /var/lib/apt/lists/* \
         /usr/share/doc/*
 
 RUN groupadd -r -g 1000 daikatana && \
@@ -27,13 +26,8 @@ RUN chmod 755 /opt/daikatana/data
 
 VOLUME /opt/daikatana/data
 
-# EXPOSE 27910/tcp
-# EXPOSE 27910/udp
-
 WORKDIR /opt/daikatana
 ENV XDG_DATA_HOME=/opt/daikatana
 
-CMD /opt/daikatana/dkded \
-+exec coop.cfg
-
-
+CMD stdbuf -oL /opt/daikatana/dkded \
++exec coop.cfg 2>&1 | grep -v --line-buffered '^Rcon from .*: status$'

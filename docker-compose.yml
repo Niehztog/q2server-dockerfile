@@ -1,10 +1,8 @@
-version: '3.8'
-
 services:
   r1q2-arena:
     build:
-      context: /home/nils/quake2
-      dockerfile: /home/nils/projects/q2server-dockerfile/Dockerfile
+      context: /home/nils/projects/q2server-dockerfile
+      dockerfile: Dockerfile
     image: r1q2-arena
     environment:
       Q2_EXECUTEABLE: 'r1q2ded-old'
@@ -12,13 +10,21 @@ services:
       Q2_IP: 'localhost'
       Q2_PORT: '27910'
     restart: always
+    init: true
     ports:
     - "27910:27910/udp"
     - "27910:27910/tcp"
+    volumes:
+    - /home/nils/quake2:/opt/quake2
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
   r1q2-xatrix:
     build:
-      context: /home/nils/quake2
-      dockerfile: /home/nils/projects/q2server-dockerfile/Dockerfile
+      context: /home/nils/projects/q2server-dockerfile
+      dockerfile: Dockerfile
     image: r1q2-xatrix
     environment:
       Q2_EXECUTEABLE: 'r1q2ded'
@@ -26,6 +32,33 @@ services:
       Q2_IP: 'localhost'
       Q2_PORT: '27911'
     restart: always
+    init: true
     ports:
     - "27911:27911/udp"
     - "27911:27911/tcp"
+    volumes:
+    - /home/nils/quake2:/opt/quake2
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  daikatana:
+    build:
+      context: /home/nils/Daikatana-Linux-2025-12-21-x64
+      dockerfile: /home/nils/projects/q2server-dockerfile/Dockerfile-daikatana
+    image: daikatana-server
+    restart: unless-stopped
+    init: true
+    ports:
+    - "27982:27982/udp"
+    - "27982:27982/tcp"
+    - "27992:27992/udp"
+    - "27992:27992/tcp"
+    volumes:
+    - /home/nils/Daikatana-Linux-2025-12-21-x64/data:/opt/daikatana/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
