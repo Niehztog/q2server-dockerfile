@@ -1,5 +1,6 @@
 #!/bin/sh
-# Suppress WallFly's routine "rcon status" polls from the container log.
+# Suppress WallFly's routine "rcon status" polls, and other high-frequency
+# expected chatter, from the container log.
 #
 # The WallFly master-server bot polls arena/xatrix with an authenticated
 # "rcon ... status" every few seconds, forever. The engine prints every
@@ -15,6 +16,12 @@
 # command (kick, ban, map change, ...) is printed in full, including the
 # originating address - which a blanket grep on the address line would have
 # discarded.
+#
+# Match-timer countdowns and per-map spawn-count lines need no such pairing -
+# each is a single self-contained line - so a plain case match drops them.
+# Only the exact zero-value spawn lines are dropped ("0 entities inhibited",
+# "0 teams with 0 entities"); a nonzero count still prints, since that would
+# mean something out of the ordinary actually happened.
 #
 # Implemented as a shell read-loop rather than awk on purpose: mawk reads
 # stdin in blocks, so piping the server through "awk -f" swallowed the log
@@ -44,6 +51,14 @@ while IFS= read -r line; do
         printf '%s\n' "$pend"
         pend=''
     fi
+
+    case "$line" in
+        [0-9]*' minute remaining in match.'|[0-9]*' minutes remaining in match.'|\
+[0-9]*' second remaining in match.'|[0-9]*' seconds remaining in match.'|\
+'Timelimit hit.'|'0 entities inhibited'|'0 teams with 0 entities')
+            continue
+            ;;
+    esac
 
     printf '%s\n' "$line"
 done

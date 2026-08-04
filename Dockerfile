@@ -140,8 +140,19 @@ USER quake2
 WORKDIR /opt/quake2
 
 # The engine lives in the image; only game DATA is bind-mounted at
-# /opt/quake2. basedir/libdir are set explicitly because q2pro otherwise also
-# searches ~/.q2pro and would look for the game library there first.
+# /opt/quake2. basedir/libdir/homedir are all set explicitly to /opt/quake2
+# because q2pro otherwise defaults homedir to ~/.q2pro and checks it before
+# basedir/libdir for several lookups. For the game library, that's harmless -
+# "Can't access /home/quake2/.q2pro/<gamedir>/gamei386.so", immediately
+# followed by a fallback that finds it under libdir. But file reads the game
+# DLL itself makes (e.g. xatrix/openffa's own map-rotation code loading
+# "mapcfg/maplist.txt" for its random map cycle) only try the homedir path,
+# with no fallback - they fail outright ("Couldn't load
+# '/home/quake2/.q2pro/xatrix/mapcfg/maplist.txt'"), silently leaving the
+# mod's map list empty. Symptom: the server never rotates and instead
+# restarts the same map after every timelimit. Pointing homedir at the same
+# real directory as basedir/libdir closes the gap for every such lookup, not
+# just this one.
 #
 # net_port, not the classic "port" cvar, controls q2pro's actual listen socket
 # (it binds PORT_SERVER=27910 regardless of what "port" says), so both are
@@ -155,4 +166,4 @@ WORKDIR /opt/quake2
 # "docker logs" is live rather than arriving in delayed batches; stty -onlcr
 # stops the PTY translating \n to \r\n (which would otherwise break the
 # rcon filter's line matching).
-CMD script -qefc "stty -onlcr; /opt/q2pro/q2proded +set basedir /opt/quake2 +set libdir /opt/quake2 +set dedicated 1 +set game $Q2_GAMEDIR +set ip $Q2_IP +set port $Q2_PORT +set net_port $Q2_PORT +set map_override_path maps +exec server1.cfg +exec $Q2_OVERRIDE_CFG" /dev/null 2>&1 | /bin/sh /opt/filter-rcon-status.sh
+CMD script -qefc "stty -onlcr; /opt/q2pro/q2proded +set basedir /opt/quake2 +set libdir /opt/quake2 +set homedir /opt/quake2 +set dedicated 1 +set game $Q2_GAMEDIR +set ip $Q2_IP +set port $Q2_PORT +set net_port $Q2_PORT +set map_override_path maps +exec server1.cfg +exec $Q2_OVERRIDE_CFG" /dev/null 2>&1 | /bin/sh /opt/filter-rcon-status.sh

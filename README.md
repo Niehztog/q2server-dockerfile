@@ -179,16 +179,28 @@ print(s.recvfrom(4096)[0].decode(errors="replace"))
   reaches the game process — without it shutdown takes the full 10s grace
   period and ends in `SIGKILL`.
 - `filter-rcon-status.sh` drops the master-server bot's constant `rcon status`
-  polls, which the engine prints unconditionally. q2pro prints rcon across
+  polls, which the engine prints unconditionally, plus per-match/per-map lines
+  that fire on a predictable schedule and carry no signal (timer countdowns,
+  and the always-zero `0 entities inhibited` / `0 teams with 0 entities`
+  spawn counts — a nonzero count still prints). q2pro prints rcon across
   **two** lines, so the filter matches the pair and suppresses it only when
-  the command is exactly `status`. It's a shell read-loop rather than `awk`
-  because mawk reads stdin in blocks and swallowed the log entirely.
+  the command is exactly `status`; the other lines need no such pairing. It's
+  a shell read-loop rather than `awk` because mawk reads stdin in blocks and
+  swallowed the log entirely.
 - `map_override_path maps` is set in the `CMD` because q2pro requires it to
   honour `.bsp.override` / `.ent` entity overrides, which several xatrix maps
   depend on. Without it such a map fails to load.
 - `net_port`, not `port`, controls q2pro's actual listen socket — it binds
   `PORT_SERVER` (27910) regardless of `port`. Both are set; `port` is still
   needed because the game DLL reads it.
+- `homedir` is set to the same path as `basedir`/`libdir` (`/opt/quake2`).
+  q2pro defaults it to `~/.q2pro` and checks that first for several things;
+  for the game library it falls back to `libdir` when not found there, but
+  for file reads the game DLL itself makes it doesn't — it fails outright.
+  That silently broke xatrix's own map-rotation code (`Couldn't load
+  '/home/quake2/.q2pro/xatrix/mapcfg/maplist.txt'` on every map load), so the
+  server replayed the same map after every timelimit instead of rotating.
+  Pointing `homedir` at the real data directory fixes every such lookup.
 - Some legacy admin config directives (`addcvarban`, `addcommandban`,
   `sv_max_packetdup`, ...) log as `Unknown command`. Harmless — extensions
   q2pro doesn't implement.
