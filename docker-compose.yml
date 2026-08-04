@@ -1,12 +1,16 @@
 services:
-  r1q2-arena:
+  q2pro-arena:
     build:
       context: /home/nils/projects/q2server-dockerfile
       dockerfile: Dockerfile
-    image: r1q2-arena
+      args:
+        # arena's gamei386.real.so (2014) needs the old callee-pops
+        # struct-return convention for gi.trace(). See Dockerfile.
+        GAME_ABI_HACK: 'enabled'
+    image: q2pro-arena
     environment:
-      Q2_EXECUTEABLE: 'r1q2ded-old'
       Q2_GAMEDIR: 'arena'
+      Q2_OVERRIDE_CFG: 'q2pro-override-arena.cfg'
       Q2_IP: 'localhost'
       Q2_PORT: '27910'
     restart: always
@@ -21,14 +25,19 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-  r1q2-xatrix:
+  q2pro-xatrix:
     build:
       context: /home/nils/projects/q2server-dockerfile
       dockerfile: Dockerfile
-    image: r1q2-xatrix
+      args:
+        # xatrix's gamei386.real.so (2017) expects the MODERN convention and
+        # crashes if the abi hack is compiled in. Stated explicitly rather
+        # than relying on the default.
+        GAME_ABI_HACK: 'disabled'
+    image: q2pro-xatrix
     environment:
-      Q2_EXECUTEABLE: 'r1q2ded'
       Q2_GAMEDIR: 'xatrix'
+      Q2_OVERRIDE_CFG: 'q2pro-override-xatrix.cfg'
       Q2_IP: 'localhost'
       Q2_PORT: '27911'
     restart: always
