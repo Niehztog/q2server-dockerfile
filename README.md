@@ -74,22 +74,42 @@ not in the `Dockerfile` — an image can't write a bind mount at build time, and
 doing it from an entrypoint would rewrite your game files on every start. Run
 them once, by hand. Back up first.
 
-### 1. `gamei386.so` — the Q2Admin-tsmod wrapper
+### 1. `gamei386.so` — the Q2Admin wrapper
 
-q2pro needs a build carrying two fixes (GetGameAPI probe safety, `num_edicts`
-freshness) that upstream `tastyspleen/q2admin-tsmod` lacks; without them the
-server crashes as the mod loads, or trips edict bounds checks mid-map. They
-live on the `q2repro-compat-fixes` branch of
-[Niehztog/q2admin-tsmod](https://github.com/Niehztog/q2admin-tsmod).
+Built into the image from a pinned commit (`Q2ADMIN_REPO`/`Q2ADMIN_COMMIT` in
+the `Dockerfile`), the same way as the engine — no separate build script
+needed anymore. Currently pinned to
+[Niehztog/q2admin](https://github.com/Niehztog/q2admin) rather than upstream
+[packetflinger/q2admin](https://github.com/packetflinger/q2admin): it carries
+one fix not yet merged there (upstream's `required_ui_keys[]` hard-requires a
+`msg` userinfo key that yquake2 clients never send, rejecting every yquake2
+connection outright). See the `Dockerfile` for the full rationale; switch
+`Q2ADMIN_REPO` back to `packetflinger/q2admin` once that PR merges.
+
+Unlike the engine it can't live in the image alone — it `dlopen()`s
+`<gamedir>/gamei386.real.so` relative to the process CWD, so it has to
+physically sit in the bind-mounted game data directory. Install it once per
+gamedir after building the image (either service's image works — the build
+doesn't depend on `GAME_ABI_HACK`):
 
 ```
-./build-gamei386.sh                 # writes ./gamei386.so, no host toolchain needed
-install -m755 gamei386.so ~/quake2/arena/gamei386.so
-install -m755 gamei386.so ~/quake2/xatrix/gamei386.so
+docker create --name q2admin-extract q2pro-xatrix
+docker cp q2admin-extract:/opt/q2admin/gamei386.so ~/quake2/xatrix/
+docker cp q2admin-extract:/opt/q2admin/gamei386.so ~/quake2/arena/
+docker rm q2admin-extract
 ```
 
-Confirm via a UDP status query: the reply's `Q2Admin` key should read
-`1.17.48-tsmod-2`.
+Confirm via a UDP status query: the reply's `q2admin` key should read the new
+`rNNN~<short-hash>` format — a different key name and version format than the
+old wrapper's `Q2Admin\1.17.48-tsmod-2`.
+
+Replaced `Niehztog/q2admin-tsmod` (a patched fork of the ~1998 tastyspleen
+lineage, previously built by the now-deleted `build-gamei386.sh` script) on
+2026-08-05: that wrapper doesn't understand q2pro's `GMF_EXTRA_USERINFO`/
+`GMF_IPV6_ADDRESS_AWARE` feature negotiation, rejecting every connecting
+client outright once a wrapped mod declares the former, and heap-overflowing
+a fixed 40-byte IP buffer for any client connecting over IPv6 once a mod
+declares the latter.
 
 ### 2. `arena/gamei386.real.so` — `PT_GNU_STACK` patch
 
