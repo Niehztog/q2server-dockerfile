@@ -70,7 +70,7 @@
 FROM debian:trixie-slim AS build
 
 ARG Q2ADMIN_CLOUD_REPO=https://github.com/Niehztog/q2admin-cloud
-ARG Q2ADMIN_CLOUD_COMMIT=2426f72c631702735bc19836c4255e357c3f2bc6
+ARG Q2ADMIN_CLOUD_COMMIT=9d21b5fa10443a701d757cc1fb8d6eb8f1fd8481
 
 # Pinned exactly to go.mod's `toolchain go1.24.4` directive, so the build
 # uses that SDK natively instead of reaching out to auto-fetch a different
