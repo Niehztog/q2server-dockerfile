@@ -129,6 +129,14 @@ RUN printf '%s\n' \
 # PKG_CONFIG_LIBDIR pins pkg-config to the i386 .pc files. Without it meson
 # finds the host's 64-bit zlib and the link fails with
 # "libz.so: file in wrong format".
+#
+# -Danticheat-server=true compiles in src/server/ac.c, q2pro's r1ch.net
+# anticheat client. Defaults to false upstream - without this flag, every
+# sv_anticheat_* cvar in anticheat.cfg (including sv_anticheat_required) is
+# just an unregistered loose cvar with zero effect, silently, since `set`
+# never errors on an unknown name. Confirmed via byte-grep of a build
+# without this flag: zero occurrences of "ANTICHEAT", "anticheat.r1ch.net",
+# or any sv_anticheat_* name anywhere in the resulting q2proded binary.
 RUN git clone "$Q2PRO_REPO" /src && \
     cd /src && \
     git checkout --detach "$Q2PRO_COMMIT" && \
@@ -137,7 +145,8 @@ RUN git clone "$Q2PRO_REPO" /src && \
         --cross-file /i386-linux.txt \
         -Dgame-abi-hack="$GAME_ABI_HACK" \
         -Dclient-ui=false \
-        -Dclient-gtv=false && \
+        -Dclient-gtv=false \
+        -Danticheat-server=true && \
     ninja -C build-i386 q2proded && \
     install -Dm755 build-i386/q2proded /out/q2proded
 
