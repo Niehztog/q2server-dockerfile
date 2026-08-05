@@ -7,7 +7,7 @@
 # activity notifier on.
 #
 # Pinned to Niehztog's fork, not upstream packetflinger/q2admin-cloud,
-# because the upstream tree has three gaps that block a fresh deployment
+# because the upstream tree has four gaps that block a fresh deployment
 # entirely, all fixed on the fork:
 #   - The embedded DB schema only ever created a "player" table.
 #     LoadFrontends() unconditionally queries a "frontend" table on every
@@ -24,6 +24,13 @@
 #     anywhere in this codebase - a missing client directory crashes the
 #     entire process, dropping every connected server, not just the
 #     misconfigured one.
+#   - HandleConnection's client-authentication step doesn't compile as
+#     shipped: it calls crypto.LoadPublicKey([]byte(fe.PublicKeyData)),
+#     but LoadPublicKey takes a file path (string) and reads it off disk -
+#     it was never usable for a key already loaded into memory from the
+#     database, which is the only way a connecting client's key is
+#     actually available at that point. Confirmed via a real build
+#     failure, not just reading the source.
 # Fixes PR'd upstream; switch Q2ADMIN_CLOUD_REPO back to
 # packetflinger/q2admin-cloud once merged - don't let this drift into a
 # silent permanent fork.
@@ -34,7 +41,7 @@
 FROM debian:trixie-slim AS build
 
 ARG Q2ADMIN_CLOUD_REPO=https://github.com/Niehztog/q2admin-cloud
-ARG Q2ADMIN_CLOUD_COMMIT=bc3795a8236f52c72ceb5e05f19d0870bce6fd91
+ARG Q2ADMIN_CLOUD_COMMIT=703bf351001bbe4bf0b9a5eb4e780bd592240aea
 
 # Pinned exactly to go.mod's `toolchain go1.24.4` directive, so the build
 # uses that SDK natively instead of reaching out to auto-fetch a different
