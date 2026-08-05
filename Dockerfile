@@ -37,16 +37,45 @@ ARG Q2PRO_COMMIT=601a8df8433b0c50dbbe37c0716c3793fff140a7
 # raw strcpy for any client connecting over IPv6, once the wrapped mod
 # declares GMF_IPV6_ADDRESS_AWARE.
 # Pinned to Niehztog's fork, not upstream packetflinger/q2admin, because it
-# carries one unmerged fix: upstream's required_ui_keys[] hard-requires a
-# "msg" userinfo key that yquake2 clients never send (confirmed in yquake2's
-# own src/client/cl_main.c - it registers name/skin/rate/hand/fov/gender/
-# password/spectator but not msg), which rejected every yquake2 connection
-# outright. PR: github.com/Niehztog/q2admin/pull/new/fix-required-msg-userinfo-key
-# (branched from upstream main @ e8f70e4, the same commit this was pinned to
-# before). Switch back to Q2ADMIN_REPO=packetflinger/q2admin once that fix is
-# merged upstream - don't let this fork drift into a silent permanent one.
+# carries two unmerged fixes, developed on separate branches (each its own
+# upstream PR) and combined here on a third integration branch,
+# combined-pending-fixes, purely for deployment - the individual PR branches
+# are NOT based on each other, so each stays independently reviewable:
+#
+# 1. fix-required-msg-userinfo-key (branched from upstream main @ e8f70e4):
+#    upstream's required_ui_keys[] hard-requires a "msg" userinfo key that
+#    yquake2 clients never send (confirmed in yquake2's own
+#    src/client/cl_main.c - it registers name/skin/rate/hand/fov/gender/
+#    password/spectator but not msg), which rejected every yquake2 connection
+#    outright.
+#    PR: github.com/Niehztog/q2admin/pull/new/fix-required-msg-userinfo-key
+#
+# 2. fix-cloud-admin-crashes (also branched from upstream main @ e8f70e4):
+#    found live in production on 2026-08-05, within minutes of first ever
+#    enabling the (until-then-dormant) Cloud Admin client feature - CA_
+#    PlayerList()/PlayerConnect()/PlayerUpdate() pass a ~650-byte userinfo_t
+#    STRUCT to a variadic "%s" format argument instead of its .raw string
+#    field (every other of 40+ usages elsewhere in the codebase correctly
+#    uses .raw) - undefined behavior that segfaults the entire game server
+#    on essentially the first real player connect, which is exactly what
+#    happened: both arena and xatrix crash-looped roughly every 2 minutes
+#    until this was found and fixed. Also fixes, found during the same
+#    investigation: no bounds-checking at all on 3 of 4 outgoing
+#    message-queue writers, a wrong-constant bounds check on the 4th
+#    (compared against the 1000-byte scratch-buffer size instead of the
+#    real 22015-byte queue capacity, silently disabled by unsigned
+#    underflow once triggered), a matching unbounded recv() and an
+#    unbounded string-terminator scan on the incoming side, an unvalidated
+#    array index driven directly by the peer, and a pre-authentication
+#    remotely-reachable stack buffer overflow in the RSA handshake
+#    (peer-supplied, unvalidated length passed straight into memcpy).
+#    PR: github.com/Niehztog/q2admin/pull/new/fix-cloud-admin-crashes
+#
+# Switch back to Q2ADMIN_REPO=packetflinger/q2admin (and drop the
+# combined-pending-fixes branch entirely) once BOTH fixes are merged
+# upstream - don't let this fork drift into a silent permanent one.
 ARG Q2ADMIN_REPO=https://github.com/Niehztog/q2admin
-ARG Q2ADMIN_COMMIT=2afddcc787381cb31f62b55dec88b808cc3ffb80
+ARG Q2ADMIN_COMMIT=cd569b38c89cc5f8a2294e7d208e2a4c7b2dedbb
 
 # THE important knob. Controls the i386 struct-return calling convention
 # q2pro uses for gi.trace() (it applies
