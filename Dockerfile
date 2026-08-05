@@ -252,6 +252,16 @@ ENV Q2_IP="localhost"
 ENV Q2_PORT="27910"
 ENV Q2_OVERRIDE_CFG="q2pro-override-arena.cfg"
 
+# Host is Europe/Berlin; without this the container defaults to UTC. Real
+# symptom found 2026-08-06: xatrix/openffa's func_clock entity, in its
+# default "time of day" mode, calls time(NULL)/localtime() directly and
+# displayed exactly 2 hours behind host time (CEST is UTC+2) - the game
+# process has no other source of wall-clock time than the container's own.
+# tzdata provides the zoneinfo database; the explicit symlink + timezone
+# file + dpkg-reconfigure make it authoritative rather than relying on
+# tzdata's postinst alone to notice the TZ env var.
+ENV TZ=Europe/Berlin
+
 # 32-bit runtime libs for the engine and the game DLLs. libssl3t64 is for
 # q2admin's dynamically-linked openssl (see the build stage - avoids a
 # TEXTREL that vendoring a static openssl produced). util-linux (script,
@@ -259,7 +269,10 @@ ENV Q2_OVERRIDE_CFG="q2pro-override-arena.cfg"
 RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections && \
     dpkg --add-architecture i386 && \
     apt-get update && \
-    apt-get install -y --no-install-recommends libc6:i386 zlib1g:i386 libssl3t64:i386 && \
+    apt-get install -y --no-install-recommends libc6:i386 zlib1g:i386 libssl3t64:i386 tzdata && \
+    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
+    echo $TZ > /etc/timezone && \
+    dpkg-reconfigure -f noninteractive tzdata && \
     apt-get -y autoclean && \
     apt-get -y autoremove && \
     rm -rf \

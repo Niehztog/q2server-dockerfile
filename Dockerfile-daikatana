@@ -1,8 +1,17 @@
 FROM debian:trixie-slim
 
+# Host is Europe/Berlin; see q2server-dockerfile's own Dockerfile for the
+# full rationale (a real symptom on xatrix - func_clock's "time of day"
+# mode showing UTC instead of local time). Applied here too for the same
+# reason and for consistency across all three game servers.
+ENV TZ=Europe/Berlin
+
 RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections && \
     apt-get update && \
-    apt-get install -y --no-install-recommends curl && \
+    apt-get install -y --no-install-recommends curl tzdata && \
+    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
+    echo $TZ > /etc/timezone && \
+    dpkg-reconfigure -f noninteractive tzdata && \
     apt-get -y autoclean && \
     apt-get -y autoremove && \
     rm -rf \
