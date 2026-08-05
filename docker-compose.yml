@@ -63,6 +63,12 @@ services:
     # daikatana's `unless-stopped`, so this matches arena/xatrix instead.
     restart: always
     init: true
+    environment:
+      # Lets this LAN-only deployment skip real OAuth for the web UI login
+      # without baking anything into the (public) q2admin-cloud repo - see
+      # Dockerfile-q2admin-cloud. Sourced from .env (gitignored), never
+      # hardcode a real value directly in this file.
+      AUTH_BYPASS_EMAIL: ${AUTH_BYPASS_EMAIL:-}
     ports:
     # Web/API port only. The game-TCP port (9988) that arena/xatrix
     # actually connect to is reached over the default Compose network via

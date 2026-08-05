@@ -37,14 +37,16 @@
 #     master-server bot both real servers get polled by, indefinitely)
 #     sends a userinfo string that doesn't - crashing the entire process
 #     on the very first connect from a real client, not a hypothetical.
-#   - AuthBypass is a const hardcoded to the upstream author's own test
+#   - AuthBypass was a const hardcoded to the upstream author's own test
 #     email, unconditionally active on every deployment regardless of
-#     config - /sign-in always attempts to mock-login as that account
+#     config - /sign-in always attempted to mock-login as that account
 #     instead of rendering a real sign-in page. Confirmed live: visiting
 #     /sign-in on this deployment (no OAuth configured, no such user in
 #     the database) surfaced MockLogin's raw error text instead of a
-#     normal sign-in page. Set back to empty, the value the surrounding
-#     "if AuthBypass != \"\"" check already assumes means "disabled."
+#     normal sign-in page. Now reads AUTH_BYPASS_EMAIL from the
+#     environment instead (empty/unset = disabled, the same as the
+#     const used to assume) - lets THIS deployment opt in without ever
+#     baking a real value into this shared, public repo.
 #
 # Also carries one opinionated deployment change, not an upstream bug fix:
 # SetupPlayerCookie() (a persistent per-player ban-evasion tracking cvar,
@@ -68,7 +70,7 @@
 FROM debian:trixie-slim AS build
 
 ARG Q2ADMIN_CLOUD_REPO=https://github.com/Niehztog/q2admin-cloud
-ARG Q2ADMIN_CLOUD_COMMIT=ce2c87f57bbd666d272d2dcbdf2a8e26f42aa66d
+ARG Q2ADMIN_CLOUD_COMMIT=2426f72c631702735bc19836c4255e357c3f2bc6
 
 # Pinned exactly to go.mod's `toolchain go1.24.4` directive, so the build
 # uses that SDK natively instead of reaching out to auto-fetch a different
