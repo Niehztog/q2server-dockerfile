@@ -52,6 +52,33 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+  q2admin-cloud:
+    build:
+      context: /home/nils/projects/q2server-dockerfile
+      dockerfile: Dockerfile-q2admin-cloud
+    image: q2admin-cloud
+    # No panic recovery anywhere in q2admin-cloud's codebase - a single bad
+    # message from either game server can in principle take the whole
+    # process down. Fast auto-recovery matters more here than for
+    # daikatana's `unless-stopped`, so this matches arena/xatrix instead.
+    restart: always
+    init: true
+    ports:
+    # Web/API port only. The game-TCP port (9988) that arena/xatrix
+    # actually connect to is reached over the default Compose network via
+    # the service name - it never needs to touch the host's LAN-facing
+    # ports at all. RPC and SSH admin-terminal ports run inside the
+    # container too (both start unconditionally) but are deliberately not
+    # published here, so this is the only new LAN-facing surface this
+    # deployment adds.
+    - "192.168.1.38:8087:8087/tcp"
+    volumes:
+    - /home/nils/q2admin-cloud:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
   daikatana:
     build:
       context: /home/nils/Daikatana-Linux-2025-12-21-x64

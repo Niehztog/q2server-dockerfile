@@ -1,0 +1,106 @@
+# q2admin-cloud: the server side of the "Cloud Admin" protocol that
+# packetflinger/q2admin (already running in both the arena and xatrix
+# images, see Dockerfile) has full client support for but which is currently
+# dormant on both live servers. Gives arena and xatrix a shared moderation
+# backend (bans/mutes/rules, cross-server teleport/invite, SSH admin
+# terminal) and, more immediately, a live player-count endpoint to build an
+# activity notifier on.
+#
+# Pinned to Niehztog's fork, not upstream packetflinger/q2admin-cloud,
+# because the upstream tree has three gaps that block a fresh deployment
+# entirely, all fixed on the fork:
+#   - The embedded DB schema only ever created a "player" table.
+#     LoadFrontends() unconditionally queries a "frontend" table on every
+#     startup that was never created anywhere - a fresh database crashes
+#     immediately. "connection"/"player_stat" were missing the same way;
+#     the latter errors on every single player disconnect.
+#   - WebsiteAPIGetConnectedServers (the endpoint this whole deployment
+#     exists to poll) reported len(Players) - a fixed-size slice that
+#     never shrinks - instead of the correctly-maintained PlayerCount, so
+#     it always showed the server's max-player config, never who's
+#     actually connected.
+#   - NewFrontendLogger opens a per-client log file with O_CREATE but never
+#     creates the parent directory, and there is no panic recovery
+#     anywhere in this codebase - a missing client directory crashes the
+#     entire process, dropping every connected server, not just the
+#     misconfigured one.
+# Fixes PR'd upstream; switch Q2ADMIN_CLOUD_REPO back to
+# packetflinger/q2admin-cloud once merged - don't let this drift into a
+# silent permanent fork.
+
+# ---------------------------------------------------------------------------
+# Build stage
+# ---------------------------------------------------------------------------
+FROM debian:trixie-slim AS build
+
+ARG Q2ADMIN_CLOUD_REPO=https://github.com/Niehztog/q2admin-cloud
+ARG Q2ADMIN_CLOUD_COMMIT=bc3795a8236f52c72ceb5e05f19d0870bce6fd91
+
+# Pinned exactly to go.mod's `toolchain go1.24.4` directive, so the build
+# uses that SDK natively instead of reaching out to auto-fetch a different
+# one mid-build. Debian trixie's packaged golang-go isn't used here for the
+# same reproducibility reason q2pro/q2admin above are built from a pinned
+# git commit rather than whatever apt happens to carry.
+ARG GO_VERSION=1.24.4
+ARG GO_SHA256=77e5da33bb72aeaef1ba4418b6fe511bc4d041873cbf82e5aa6318740df98717
+
+RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends git ca-certificates curl gcc libc6-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tar.gz && \
+    echo "${GO_SHA256}  /tmp/go.tar.gz" | sha256sum -c - && \
+    tar -C /usr/local -xzf /tmp/go.tar.gz && \
+    rm /tmp/go.tar.gz
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+# mattn/go-sqlite3 is a cgo package (statically compiles its own bundled
+# sqlite3 C amalgamation) - CGO_ENABLED=1 plus the gcc installed above are
+# both required, or the build fails outright rather than silently producing
+# a broken binary.
+ENV CGO_ENABLED=1
+
+RUN git clone "$Q2ADMIN_CLOUD_REPO" /src-q2admin-cloud && \
+    cd /src-q2admin-cloud && \
+    git checkout --detach "$Q2ADMIN_CLOUD_COMMIT" && \
+    go build -o /out/q2admind .
+
+RUN set -eu; \
+    readelf -h /out/q2admind | grep -q 'ELF64' || { echo 'q2admind is not ELF64'; exit 1; }; \
+    echo "q2admind OK (ELF64)"
+
+# ---------------------------------------------------------------------------
+# Runtime stage
+# ---------------------------------------------------------------------------
+FROM debian:trixie-slim
+
+# UID 1000 matches the host's real "nils" login (same reason as the
+# q2pro/daikatana images) so the process can write to its bind-mounted
+# /data (database, crypto keys, per-client logs).
+RUN useradd -r -u 1000 -U -s /sbin/nologin -M q2admincloud
+
+# Binary and web assets are image-owned, kept separate from /data (the
+# persisted bind-mount target) deliberately: backend/routes.go serves
+# static assets from a hardcoded "./api/website" relative to the process's
+# CWD (not the "web_root" config value the HTML templates elsewhere in the
+# same codebase correctly use - a real inconsistency in upstream, not
+# something worth patching around). Bind-mounting the whole WORKDIR would
+# shadow this image-baked directory with an empty host directory. Keeping
+# api/website under WORKDIR and all persisted state under /data avoids the
+# conflict entirely - WORKDIR still has to literally match where
+# api/website lives for the hardcoded relative path to resolve.
+COPY --from=build /out/q2admind /opt/q2admin-cloud/q2admind
+COPY --from=build /src-q2admin-cloud/api/website /opt/q2admin-cloud/api/website
+
+RUN mkdir -p /data && chown q2admincloud:q2admincloud /data
+
+USER q2admincloud
+
+WORKDIR /opt/q2admin-cloud
+
+# --foreground is the only thing that controls stdout-vs-logfile (the
+# "foreground" field in the config protobuf is dead code - nothing reads
+# it) - without this flag, "docker compose logs" would show nothing, unlike
+# every other service in this project.
+CMD ["/opt/q2admin-cloud/q2admind", "--config", "/data/config/config.pb", "--foreground"]
