@@ -77,6 +77,29 @@ ARG Q2PRO_COMMIT=601a8df8433b0c50dbbe37c0716c3793fff140a7
 ARG Q2ADMIN_REPO=https://github.com/Niehztog/q2admin
 ARG Q2ADMIN_COMMIT=cd569b38c89cc5f8a2294e7d208e2a4c7b2dedbb
 
+# openffa-xatrix (the actual game DLL xatrix runs, wrapped by q2admin above -
+# q2admin dlopens it as "gamei386.real.so") was, until 2026-08-06, NOT built
+# by this Dockerfile at all: ~/quake2/xatrix/gamei386.real.so was a manually
+# produced binary dated 2017-05-17, never rebuilt through any tracked
+# process. Discovered when enabling g_warmup (a pre-match ready-up/countdown
+# feature) had zero effect on the live server despite the cvar taking the
+# value fine - `strings` on the actual deployed .so showed zero occurrences
+# of g_warmup/g_countdown_time anywhere, because that feature was only added
+# upstream on 2022-11-03 (71a3fbf, "Add warmup support"), five years after
+# the deployed build. Confirmed the fork's current HEAD genuinely has it
+# (`git merge-base --is-ancestor 71a3fbf HEAD`) despite HEAD's own tip commit
+# showing an author date of 2017-05-17 - that's just the fork's own last
+# local patch before the 2026-08-04 rebase onto a modern upstream base (see
+# q2-openffa-xatrix-rebase in project memory); committer date on that same
+# commit is 2026-08-04, and it carries 222 total commits, not a handful.
+# Built the same way as q2admin above: pinned commit, i386 cross-compile,
+# verified before shipping. No CONFIG_SQLITE/CONFIG_CURL - openffa's own
+# Makefile leaves both off by default, and the runtime stage below doesn't
+# install libsqlite3/libcurl i386 packages, so don't turn these on without
+# adding those.
+ARG OPENFFA_REPO=https://github.com/Niehztog/openffa-xatrix
+ARG OPENFFA_COMMIT=9db7aaec03ae12f5a771f359d27fe3ee909812b2
+
 # THE important knob. Controls the i386 struct-return calling convention
 # q2pro uses for gi.trace() (it applies
 # __attribute__((callee_pop_aggregate_return(0))) plus -mstackrealign).
@@ -199,6 +222,26 @@ RUN set -eu; \
         && { echo 'q2admin gamei386.so has a TEXTREL - dynamic linking of openssl/zlib must have regressed'; exit 1; } || true; \
     echo "q2admin gamei386.so OK (ELF32, no TEXTREL)"
 
+# openffa-xatrix's own Makefile: CPU=i386 alone picks the output filename
+# (game$(CPU).so, no revision suffix - unlike q2admin's, no TARGET override
+# needed), and REV/VER are derived from git automatically. Its own build
+# already runs `ldd -r` on the result as a post-link undefined-symbol check
+# (see the LIBTOOL var in its Makefile).
+RUN git clone "$OPENFFA_REPO" /src-openffa && \
+    cd /src-openffa && \
+    git checkout --detach "$OPENFFA_COMMIT" && \
+    make CPU=i386 CC="gcc -m32" && \
+    install -Dm755 gamei386.so /out/gamei386.real.so
+
+# Fail the build rather than silently ship a build missing the one feature
+# this whole stage exists for - exactly how the stale 2017 binary went
+# unnoticed for years.
+RUN set -eu; \
+    readelf -h /out/gamei386.real.so | grep -q 'ELF32' || { echo 'openffa gamei386.real.so is not ELF32'; exit 1; }; \
+    strings /out/gamei386.real.so | grep -q '^g_warmup$' \
+        || { echo 'openffa gamei386.real.so is missing g_warmup - wrong commit pinned?'; exit 1; }; \
+    echo "openffa gamei386.real.so OK (ELF32, has g_warmup)"
+
 # ---------------------------------------------------------------------------
 # Runtime stage
 # ---------------------------------------------------------------------------
@@ -233,18 +276,22 @@ RUN useradd -r -u 1000 -U -s /sbin/nologin -M quake2
 
 RUN mkdir -p /opt/quake2 && chown quake2:quake2 /opt/quake2
 
-# q2admin lands at /opt/q2admin, not directly in a gamedir: unlike q2proded,
-# it has to sit *inside* the bind-mounted gamedir at runtime (it dlopens
-# "<gamedir>/gamei386.real.so" - or whatever "gamelibrary" names - relative
-# to the process CWD), so the image can't deliver it there directly, and
-# copying it over the operator's file from an entrypoint on every start
-# would silently overwrite a deliberate version choice. Install it into a
-# gamedir once, the same "one-time game data preparation" way as before:
+# q2admin (and, for xatrix, openffa-xatrix's gamei386.real.so that it wraps)
+# land at /opt/q2admin and /opt/openffa, not directly in a gamedir: unlike
+# q2proded, they have to sit *inside* the bind-mounted gamedir at runtime
+# (q2admin dlopens "<gamedir>/gamei386.real.so" - or whatever "gamelibrary"
+# names - relative to the process CWD), so the image can't deliver them
+# there directly, and copying over the operator's file from an entrypoint on
+# every start would silently overwrite a deliberate version choice. Install
+# into a gamedir once, the same "one-time game data preparation" way as
+# before:
 #   docker create --name q2admin-extract <image> && \
 #   docker cp q2admin-extract:/opt/q2admin/gamei386.so ~/quake2/<gamedir>/ && \
+#   docker cp q2admin-extract:/opt/openffa/gamei386.real.so ~/quake2/xatrix/ && \
 #   docker rm q2admin-extract
 COPY --from=build /out/q2proded /opt/q2pro/q2proded
 COPY --from=build /out/gamei386.so /opt/q2admin/gamei386.so
+COPY --from=build /out/gamei386.real.so /opt/openffa/gamei386.real.so
 COPY filter-rcon-status.sh /opt/filter-rcon-status.sh
 
 USER quake2
