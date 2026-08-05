@@ -37,6 +37,19 @@
 #     master-server bot both real servers get polled by, indefinitely)
 #     sends a userinfo string that doesn't - crashing the entire process
 #     on the very first connect from a real client, not a hypothetical.
+#
+# Also carries one opinionated deployment change, not an upstream bug fix:
+# SetupPlayerCookie() (a persistent per-player ban-evasion tracking cvar,
+# stuffed into every connecting player unconditionally) is now gated behind
+# a new per-frontend enable_player_cookies column, defaulting to off. The
+# stuffed commands are legitimately private (unicast, not broadcast), but
+# the connecting player's own client echoes locally-executed stuffed
+# commands into its console/notify overlay, which reads as unexplained
+# chat from themselves - confirmed directly against a real yquake2 client.
+# Existing databases need a one-time `ALTER TABLE frontend ADD COLUMN
+# enable_player_cookies INTEGER NOT NULL DEFAULT 0` - CREATE TABLE IF NOT
+# EXISTS won't retroactively add a column to an already-created table.
+#
 # Fixes PR'd upstream; switch Q2ADMIN_CLOUD_REPO back to
 # packetflinger/q2admin-cloud once merged - don't let this drift into a
 # silent permanent fork.
@@ -47,7 +60,7 @@
 FROM debian:trixie-slim AS build
 
 ARG Q2ADMIN_CLOUD_REPO=https://github.com/Niehztog/q2admin-cloud
-ARG Q2ADMIN_CLOUD_COMMIT=2dd176f2b0849dcdd3923937078a050226cd8d24
+ARG Q2ADMIN_CLOUD_COMMIT=ca5b3fc902a7c6eac323500f446d91d636bd36ee
 
 # Pinned exactly to go.mod's `toolchain go1.24.4` directive, so the build
 # uses that SDK natively instead of reaching out to auto-fetch a different
