@@ -7,7 +7,7 @@
 # activity notifier on.
 #
 # Pinned to Niehztog's fork, not upstream packetflinger/q2admin-cloud,
-# because the upstream tree has four gaps that block a fresh deployment
+# because the upstream tree has five gaps that block a fresh deployment
 # entirely, all fixed on the fork:
 #   - The embedded DB schema only ever created a "player" table.
 #     LoadFrontends() unconditionally queries a "frontend" table on every
@@ -31,6 +31,12 @@
 #     database, which is the only way a connecting client's key is
 #     actually available at that point. Confirmed via a real build
 #     failure, not just reading the source.
+#   - UserinfoMap unconditionally reads userinfo key/value pairs from a
+#     backslash-split slice without checking it split into an even number
+#     of segments. Confirmed live in production: WallFly (the
+#     master-server bot both real servers get polled by, indefinitely)
+#     sends a userinfo string that doesn't - crashing the entire process
+#     on the very first connect from a real client, not a hypothetical.
 # Fixes PR'd upstream; switch Q2ADMIN_CLOUD_REPO back to
 # packetflinger/q2admin-cloud once merged - don't let this drift into a
 # silent permanent fork.
@@ -41,7 +47,7 @@
 FROM debian:trixie-slim AS build
 
 ARG Q2ADMIN_CLOUD_REPO=https://github.com/Niehztog/q2admin-cloud
-ARG Q2ADMIN_CLOUD_COMMIT=703bf351001bbe4bf0b9a5eb4e780bd592240aea
+ARG Q2ADMIN_CLOUD_COMMIT=2dd176f2b0849dcdd3923937078a050226cd8d24
 
 # Pinned exactly to go.mod's `toolchain go1.24.4` directive, so the build
 # uses that SDK natively instead of reaching out to auto-fetch a different
