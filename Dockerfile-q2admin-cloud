@@ -7,7 +7,7 @@
 # activity notifier on.
 #
 # Pinned to Niehztog's fork, not upstream packetflinger/q2admin-cloud,
-# because the upstream tree has five gaps that block a fresh deployment
+# because the upstream tree has six gaps that block a fresh deployment
 # entirely, all fixed on the fork:
 #   - The embedded DB schema only ever created a "player" table.
 #     LoadFrontends() unconditionally queries a "frontend" table on every
@@ -37,6 +37,14 @@
 #     master-server bot both real servers get polled by, indefinitely)
 #     sends a userinfo string that doesn't - crashing the entire process
 #     on the very first connect from a real client, not a hypothetical.
+#   - AuthBypass is a const hardcoded to the upstream author's own test
+#     email, unconditionally active on every deployment regardless of
+#     config - /sign-in always attempts to mock-login as that account
+#     instead of rendering a real sign-in page. Confirmed live: visiting
+#     /sign-in on this deployment (no OAuth configured, no such user in
+#     the database) surfaced MockLogin's raw error text instead of a
+#     normal sign-in page. Set back to empty, the value the surrounding
+#     "if AuthBypass != \"\"" check already assumes means "disabled."
 #
 # Also carries one opinionated deployment change, not an upstream bug fix:
 # SetupPlayerCookie() (a persistent per-player ban-evasion tracking cvar,
@@ -60,7 +68,7 @@
 FROM debian:trixie-slim AS build
 
 ARG Q2ADMIN_CLOUD_REPO=https://github.com/Niehztog/q2admin-cloud
-ARG Q2ADMIN_CLOUD_COMMIT=ca5b3fc902a7c6eac323500f446d91d636bd36ee
+ARG Q2ADMIN_CLOUD_COMMIT=ce2c87f57bbd666d272d2dcbdf2a8e26f42aa66d
 
 # Pinned exactly to go.mod's `toolchain go1.24.4` directive, so the build
 # uses that SDK natively instead of reaching out to auto-fetch a different
