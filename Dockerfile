@@ -164,8 +164,38 @@ ARG Q2ADMIN_COMMIT=cd569b38c89cc5f8a2294e7d208e2a4c7b2dedbb
 # accuracy/damage stats and item-ban systems (directly relevant now that
 # CONFIG_SQLITE is on), and a build fix for the (unused here, XATRIX is
 # unconditionally #define'd in g_local.h) non-xatrix build configuration.
+# Bumped again 2026-08-06 (96f9b73 -> 94d1e9c): another forced-update
+# rewrite (this fork's history moves routinely now, not just at big
+# upstream-merge points - see the project memory on this). The 5 fixes
+# above all carried forward under new hashes, same content. 4 new fixes
+# on top:
+# - Cmd_WeapNext_f/Cmd_WeapPrev_f (g_cmds.c) looped one step too far and
+#   could re-select the weapon already held; for the HyperBlaster/Railgun
+#   that calls Use_Weapon2() on itself, silently toggling to the
+#   Ionripper/Phalanx instead of just cycling normally.
+# - SV_Push (g_phys.c) lost the epsilon gi.linkentity() normally pads
+#   absmin/absmax with once SV_RealBoundingBox started computing an exact
+#   box, so entities sitting exactly flush against a mover (door/plat)
+#   could be excluded from its "am I about to crush something" test.
+# - G_KillBox's spawn-telefrag trace (g_utils.c) included
+#   CONTENTS_PLAYERCLIP|CONTENTS_WINDOW in its mask; ordinary world solid
+#   brushes block regardless of mask, so on maps whose spawn points sit
+#   flush with the floor the world itself, not the occupying player, was
+#   reported as the hit and the telefrag never happened. Narrowed to
+#   CONTENTS_MONSTER only.
+# - DualFire shared EF_QUAD's glow (p_view.c), making it indistinguishable
+#   from real Quad Damage; switched to the already-defined EF_DOUBLE, plus
+#   its own firing-cue sound (items/quadfire3.wav, already a precached
+#   asset). Also: Pickup_Powerup's dropped-DualFire timeout branch
+#   (g_items.c) never ran under DF_INSTANT_ITEMS, a Trap-specific
+#   ammo-drop guard, a proper Trap ammo-count floor at zero
+#   (weapon_trap_fire, p_weapon.c), a Phalanx attempt-count fix so hit%
+#   can't read over 100, missing obituary strings for the 3 trap-related
+#   MOD_ constants (all pre-existing, unused until now), and
+#   Trap_Think's kill-credit MOD switched from generic MOD_EXPLOSIVE to
+#   MOD_TRAP_SPLASH so the trap's owner is actually credited.
 ARG OPENFFA_REPO=https://github.com/Niehztog/openffa-xatrix
-ARG OPENFFA_COMMIT=96f9b730c029575a8ada1daea700ed31439c851e
+ARG OPENFFA_COMMIT=94d1e9c0ba3030095955c8ee9ea8cc980d144ae4
 
 # Enables g_sqlite.c (see the ARG comment above for why CONFIG_CURL/
 # CONFIG_UDP must stay off if this is on). Needs libsqlite3-dev:i386 here
