@@ -93,10 +93,16 @@ ARG Q2ADMIN_COMMIT=cd569b38c89cc5f8a2294e7d208e2a4c7b2dedbb
 # q2-openffa-xatrix-rebase in project memory); committer date on that same
 # commit is 2026-08-04, and it carries 222 total commits, not a handful.
 # Built the same way as q2admin above: pinned commit, i386 cross-compile,
-# verified before shipping. No CONFIG_SQLITE/CONFIG_CURL - openffa's own
-# Makefile leaves both off by default, and the runtime stage below doesn't
-# install libsqlite3/libcurl i386 packages, so don't turn these on without
-# adding those.
+# verified before shipping. CONFIG_SQLITE=1 below enables the per-player
+# stats database (g_sql_database); CONFIG_CURL and CONFIG_UDP - the two
+# *alternative* stats backends - are deliberately left off: g_sqlite.c/
+# g_curl.c/g_udp.c all define the same G_LogClient/G_OpenDatabase/etc.
+# function names, so more than one of the three enabled at once fails the
+# link with duplicate symbols. Also relevant if the engine's sv_fps is ever
+# changed from its default: openffa hardcodes its own HZ/FRAMETIME to a
+# fixed 10 unless CONFIG_VARIABLE_SERVER_FPS is also set, in which case
+# they track the engine's actual tick rate instead - not enabled, nothing
+# currently overrides sv_fps from its default.
 #
 # Bumped 2026-08-06 (9db7aae -> 34888fa, own fork-local fixes, not
 # upstream; squashed by hand a couple of times along the way, so don't go
@@ -135,6 +141,11 @@ ARG Q2ADMIN_COMMIT=cd569b38c89cc5f8a2294e7d208e2a4c7b2dedbb
 ARG OPENFFA_REPO=https://github.com/Niehztog/openffa-xatrix
 ARG OPENFFA_COMMIT=34888fac9896c6b062500544e505e89b66409abc
 
+# Enables g_sqlite.c (see the ARG comment above for why CONFIG_CURL/
+# CONFIG_UDP must stay off if this is on). Needs libsqlite3-dev:i386 here
+# and libsqlite3:i386 in the runtime stage - see both apt-get lines below.
+ARG OPENFFA_CONFIG_SQLITE=1
+
 # THE important knob. Controls the i386 struct-return calling convention
 # q2pro uses for gi.trace() (it applies
 # __attribute__((callee_pop_aggregate_return(0))) plus -mstackrealign).
@@ -162,7 +173,8 @@ RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selectio
     apt-get update && \
     apt-get install -y --no-install-recommends \
         git ca-certificates meson ninja-build pkg-config make \
-        gcc gcc-multilib libc6-dev-i386 zlib1g-dev:i386 libssl-dev:i386 && \
+        gcc gcc-multilib libc6-dev-i386 zlib1g-dev:i386 libssl-dev:i386 \
+        libsqlite3-dev:i386 && \
     rm -rf /var/lib/apt/lists/*
 
 # The game DLLs are 32-bit, so the engine must be too.
@@ -265,7 +277,7 @@ RUN set -eu; \
 RUN git clone "$OPENFFA_REPO" /src-openffa && \
     cd /src-openffa && \
     git checkout --detach "$OPENFFA_COMMIT" && \
-    make CPU=i386 CC="gcc -m32" && \
+    make CPU=i386 CC="gcc -m32" CONFIG_SQLITE="$OPENFFA_CONFIG_SQLITE" && \
     install -Dm755 gamei386.so /out/gamei386.real.so
 
 # Fail the build rather than silently ship a build missing the one feature
@@ -275,7 +287,13 @@ RUN set -eu; \
     readelf -h /out/gamei386.real.so | grep -q 'ELF32' || { echo 'openffa gamei386.real.so is not ELF32'; exit 1; }; \
     strings /out/gamei386.real.so | grep -q '^g_warmup$' \
         || { echo 'openffa gamei386.real.so is missing g_warmup - wrong commit pinned?'; exit 1; }; \
-    echo "openffa gamei386.real.so OK (ELF32, has g_warmup)"
+    if [ -n "$OPENFFA_CONFIG_SQLITE" ]; then \
+        readelf -d /out/gamei386.real.so | grep -q 'libsqlite3\.so' \
+            || { echo 'CONFIG_SQLITE was requested but gamei386.real.so is not linked against libsqlite3'; exit 1; }; \
+        strings /out/gamei386.real.so | grep -q '^g_sql_database$' \
+            || { echo 'CONFIG_SQLITE was requested but g_sql_database cvar is missing from the binary'; exit 1; }; \
+    fi; \
+    echo "openffa gamei386.real.so OK (ELF32, has g_warmup, sqlite=${OPENFFA_CONFIG_SQLITE:-off})"
 
 # ---------------------------------------------------------------------------
 # Runtime stage
@@ -304,7 +322,7 @@ ENV TZ=Europe/Berlin
 RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections && \
     dpkg --add-architecture i386 && \
     apt-get update && \
-    apt-get install -y --no-install-recommends libc6:i386 zlib1g:i386 libssl3t64:i386 tzdata && \
+    apt-get install -y --no-install-recommends libc6:i386 zlib1g:i386 libssl3t64:i386 tzdata libsqlite3-0:i386 && \
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
     echo $TZ > /etc/timezone && \
     dpkg-reconfigure -f noninteractive tzdata && \
