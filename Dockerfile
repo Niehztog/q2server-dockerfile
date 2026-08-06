@@ -138,8 +138,34 @@ ARG Q2ADMIN_COMMIT=cd569b38c89cc5f8a2294e7d208e2a4c7b2dedbb
 #    in there (same gap in the README's own client-commands list),
 #    unrelated to the g_warmup fixes above, just a pre-existing
 #    documentation gap noticed once the feature was actually in use.
+#
+# Bumped again 2026-08-06 (34888fa -> 96f9b73): the fork owner's own
+# follow-up work, not mine - history got rewritten again along the way
+# (the two fixes above now live at different hashes than described, same
+# content though) so only the tip hash matters. Includes a genuine
+# refinement of fix #1 above: motd_framenum/motd_shown moved from
+# client_respawn_t (resp) to client_persistant_t (pers), because resp is
+# ALSO wiped by ordinary spectator respawns (typing "observe"), not just
+# level resets/new connects - under the old placement, switching to
+# spectator mid-match re-armed the MOTD auto-show, not just genuine new
+# levels. ClientBegin() still explicitly re-arms both fields on every
+# level load, so "shows again each map" (matching q2admin's original
+# documented intent) is preserved; only the unwanted "also re-arms on any
+# spectator toggle" side effect is gone. Plus 5 unrelated fixes to the
+# imported xatrix 3.20 weapon/entity code: two real memory-safety bugs
+# (a use-after-free in Trap_Think(), an unchecked G_Find() result crash
+# in misc_viper_missile_use()), several xatrix entities that were ticking
+# every frame or never firing at all because they stored think times as
+# level.time (seconds) instead of frame numbers, a trap throw-speed bug
+# (same frames-vs-seconds mixup) plus a missing weapon-model index that
+# left WEAP_TRAP unreachable and capable of an out-of-bounds inventory
+# write if g_weapon_have/g_weapon_initial ever included its bit, xatrix
+# weapons (Ionripper/Phalanx/Trap) and DualFire finally wired into the
+# accuracy/damage stats and item-ban systems (directly relevant now that
+# CONFIG_SQLITE is on), and a build fix for the (unused here, XATRIX is
+# unconditionally #define'd in g_local.h) non-xatrix build configuration.
 ARG OPENFFA_REPO=https://github.com/Niehztog/openffa-xatrix
-ARG OPENFFA_COMMIT=34888fac9896c6b062500544e505e89b66409abc
+ARG OPENFFA_COMMIT=96f9b730c029575a8ada1daea700ed31439c851e
 
 # Enables g_sqlite.c (see the ARG comment above for why CONFIG_CURL/
 # CONFIG_UDP must stay off if this is on). Needs libsqlite3-dev:i386 here
