@@ -97,8 +97,43 @@ ARG Q2ADMIN_COMMIT=cd569b38c89cc5f8a2294e7d208e2a4c7b2dedbb
 # Makefile leaves both off by default, and the runtime stage below doesn't
 # install libsqlite3/libcurl i386 packages, so don't turn these on without
 # adding those.
+#
+# Bumped 2026-08-06 (9db7aae -> 34888fa, own fork-local fixes, not
+# upstream; squashed by hand a couple of times along the way, so don't go
+# looking for df9d07b/1256477/etc. on the remote - only this hash matters):
+#
+# 1. Enabling g_warmup broke the MOTD system four independent, compounding
+#    ways, all stemming from ClientBegin()'s g_warmup branch and its
+#    downstream effects: (a) it overwrites pers.connected from
+#    CONN_PREGAME to CONN_SPECTATOR synchronously, and the auto-show
+#    trigger's outer gate only ever checked for CONN_PREGAME; (b) it also
+#    does `enter_framenum -= 5*HZ` (a hack for G_SpecRateLimited(),
+#    unrelated to MOTD), which corrupted the trigger's exact-equality
+#    delta check the same way; (c) the same branch opens the join menu
+#    immediately (layout=LAYOUT_MENU), which the trigger deliberately
+#    yields to (layout==LAYOUT_NONE required) - but selecting "Enter the
+#    game" from that menu never called PMenu_Close() (unlike every other
+#    menu selection), so layout stayed stuck at LAYOUT_MENU forever once a
+#    player actually joined, permanently blocking the timing check; (d)
+#    found after (a)-(c) were deployed and auto-show confirmed working,
+#    but manually typing "motd" later did nothing: the 15s dismiss check
+#    computed its delta from the same connect-time resp.motd_framenum,
+#    never refreshed, so any manual re-trigger a while after connecting
+#    got immediately re-dismissed by the very next frame tick, too fast to
+#    perceive. Fixed all four: broadened the state check, decoupled the
+#    auto-show timer onto its own resp.motd_framenum field, converted both
+#    delta checks from exact-equality to >= with a one-shot
+#    resp.motd_shown latch, added the missing PMenu_Close() call, and
+#    added a second resp.motd_shown_framenum stamped by Cmd_Motd_f itself
+#    on every actual display (auto or manual) so the dismiss timer is
+#    always relative to the current display, not the original connect.
+#
+# 2. Added "motd" to Cmd_Commands_f's hardcoded help list - it was never
+#    in there (same gap in the README's own client-commands list),
+#    unrelated to the g_warmup fixes above, just a pre-existing
+#    documentation gap noticed once the feature was actually in use.
 ARG OPENFFA_REPO=https://github.com/Niehztog/openffa-xatrix
-ARG OPENFFA_COMMIT=9db7aaec03ae12f5a771f359d27fe3ee909812b2
+ARG OPENFFA_COMMIT=34888fac9896c6b062500544e505e89b66409abc
 
 # THE important knob. Controls the i386 struct-return calling convention
 # q2pro uses for gi.trace() (it applies
