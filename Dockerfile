@@ -74,8 +74,8 @@ ARG Q2PRO_COMMIT=601a8df8433b0c50dbbe37c0716c3793fff140a7
 # Switch back to Q2ADMIN_REPO=packetflinger/q2admin (and drop the
 # combined-pending-fixes branch entirely) once BOTH fixes are merged
 # upstream - don't let this fork drift into a silent permanent one.
-ARG Q2ADMIN_REPO=https://github.com/Niehztog/q2admin
-ARG Q2ADMIN_COMMIT=cd569b38c89cc5f8a2294e7d208e2a4c7b2dedbb
+ARG Q2ADMIN_REPO=https://github.com/packetflinger/q2admin
+ARG Q2ADMIN_COMMIT=a24e67b032240a1e6df1ce4ae4a6e2a56a86b542
 
 # openffa-xatrix (the actual game DLL xatrix runs, wrapped by q2admin above -
 # q2admin dlopens it as "gamei386.real.so") was, until 2026-08-06, NOT built
