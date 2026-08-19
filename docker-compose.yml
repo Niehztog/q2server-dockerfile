@@ -4,21 +4,20 @@ services:
       context: /home/nils/projects/q2server-dockerfile
       dockerfile: Dockerfile
       args:
-        # arena's gamei386.real.so (2014) needs the old callee-pops
-        # struct-return convention for gi.trace(). See Dockerfile.
+        # arena's gamei386.real.so is Niehztog/rocketarena2's
+        # q2pro-enhancements build (2026-08-19) - fresh-compiled with this
+        # Dockerfile's own modern gcc, same convention as xatrix, not the
+        # retired 2014 binary's. See Dockerfile for the full mechanism and
+        # the arena-assignment regression this replacement fixes.
         #
-        # STILL 'enabled' as of 2026-08-19 despite work in progress on a
-        # Niehztog/rocketarena2 q2pro-enhancements replacement (which needs
-        # 'disabled' - see Dockerfile) - that replacement found a real
-        # regression during pre-production testing (map entities' "arena"
-        # key is silently dropped, breaking arena assignment) and has NOT
-        # been deployed. Do not flip this to 'disabled' without also
-        # actually swapping ~/quake2/arena/gamei386.real.so for the new
-        # binary in the same step - flipping just this value while the old
-        # binary stays in the gamedir reproduces the exact crash the
-        # game-abi-hack mechanism exists to prevent (confirmed by hitting it
-        # directly during testing).
-        GAME_ABI_HACK: 'enabled'
+        # Learned the hard way while testing this exact switch: building
+        # this image WITHOUT also flipping this value (i.e. testing the new
+        # RA2 binary against an engine still built with 'enabled') produces
+        # an immediate SIGSEGV on server init, right after the MOTD loads -
+        # confirmed via gdb against the actual core dump, not just inferred.
+        # The two must always change together - never rebuild/deploy one
+        # side of this without the other.
+        GAME_ABI_HACK: 'disabled'
     image: q2pro-arena
     environment:
       Q2_GAMEDIR: 'arena'

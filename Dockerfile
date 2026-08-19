@@ -241,27 +241,45 @@ ARG OPENFFA_CONFIG_SQLITE=1
 # stale extern int[] in another translation unit (21 bytes OOB, on every
 # map load). Test this at least as thoroughly as any change this project has
 # shipped so far - more, if anything, given the above.
+#
+# Bumped 2026-08-19 (191a101 -> c7d0f3a, same "fix fifteen defects" commit
+# amended, not a new one - title unchanged, hash isn't): fixes the
+# arena-assignment regression this project's own pre-production testing
+# found in 191a101 (see project memory q2-rocketarena2-port) - map entities'
+# "arena" key is back in g_spawn.c's spawn_fields[] (FOFS(arena), F_INT),
+# confirmed via diff, not just the commit message. Also fixes an unrelated
+# second silently-dropped map key found the same way: the classic Quake2
+# func_train "pausetime" key (a float, first-time-only extra delay) had been
+# mis-keyed in the field table as "pause_framenum" - a real but differently
+# named field on monsterinfo_t (monster AI pausing, untouched, still an int)
+# - so any map using the standard "pausetime" key on a path_corner-style
+# entity silently lost that delay. Renamed back to "pausetime" with its own
+# st.pausetime float, matching what real .map files actually contain.
 ARG ROCKETARENA2_REPO=https://github.com/Niehztog/rocketarena2
-ARG ROCKETARENA2_COMMIT=191a10187335ce9be76545b031b122da061fe76b
+ARG ROCKETARENA2_COMMIT=c7d0f3a27ff830f4f3e619fd82f8f592057a686a
 
 # THE important knob. Controls the i386 struct-return calling convention
 # q2pro uses for gi.trace() (it applies
 # __attribute__((callee_pop_aggregate_return(0))) plus -mstackrealign).
 #
-#   arena  -> STILL enabled as of 2026-08-19, pending a fix - see
-#                         docker-compose.yml's arena service for why this
-#                         cannot just be flipped on its own. Will need to
-#                         become disabled once the ROCKETARENA2_COMMIT
-#                         replacement above is actually deployed to the
-#                         gamedir: arena's current gamei386.real.so is a
-#                         2014 binary expecting the old callee-pops
-#                         convention (without the hack, the stack drifts 4
-#                         bytes after every gi.trace() and the mod segfaults
-#                         dereferencing a bogus trace.ent, crashing in its
-#                         own SV_PushEntity), while the ROCKETARENA2 build
-#                         above is fresh-compiled with this same
+#   arena  -> disabled as of 2026-08-19 (was enabled until then - arena's
+#                         old gamei386.real.so was a 2014 binary expecting
+#                         the old callee-pops convention; without the hack
+#                         the stack drifts 4 bytes after every gi.trace()
+#                         and the mod segfaults dereferencing a bogus
+#                         trace.ent, crashing in its own SV_PushEntity).
+#                         That binary is retired - see the
+#                         ROCKETARENA2_COMMIT ARG above - and the
+#                         replacement is fresh-compiled with this same
 #                         Dockerfile's own modern gcc, same as xatrix's
 #                         gamei386.real.so, hence the modern convention.
+#                         Confirmed the hard way while testing the switch:
+#                         built and ran the new RA2 binary against an
+#                         engine still built with 'enabled' by mistake (a
+#                         leftover docker-compose.yml value) - immediate
+#                         SIGSEGV on server init, right after the MOTD
+#                         loads, confirmed via gdb against the actual core
+#                         dump. The two must always change together.
 #                         This is UNRELATED to the RA2 game DLL's own
 #                         USE_NEW_GAME_API=1 (see its config.h) - that
 #                         macro only widens GAME_API_VERSION from
