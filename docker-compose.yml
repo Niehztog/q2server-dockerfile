@@ -6,6 +6,18 @@ services:
       args:
         # arena's gamei386.real.so (2014) needs the old callee-pops
         # struct-return convention for gi.trace(). See Dockerfile.
+        #
+        # STILL 'enabled' as of 2026-08-19 despite work in progress on a
+        # Niehztog/rocketarena2 q2pro-enhancements replacement (which needs
+        # 'disabled' - see Dockerfile) - that replacement found a real
+        # regression during pre-production testing (map entities' "arena"
+        # key is silently dropped, breaking arena assignment) and has NOT
+        # been deployed. Do not flip this to 'disabled' without also
+        # actually swapping ~/quake2/arena/gamei386.real.so for the new
+        # binary in the same step - flipping just this value while the old
+        # binary stays in the gamedir reproduces the exact crash the
+        # game-abi-hack mechanism exists to prevent (confirmed by hitting it
+        # directly during testing).
         GAME_ABI_HACK: 'enabled'
     image: q2pro-arena
     environment:

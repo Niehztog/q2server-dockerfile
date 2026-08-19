@@ -71,9 +71,15 @@ ARG Q2PRO_COMMIT=601a8df8433b0c50dbbe37c0716c3793fff140a7
 #    (peer-supplied, unvalidated length passed straight into memcpy).
 #    PR: github.com/Niehztog/q2admin/pull/new/fix-cloud-admin-crashes
 #
-# Switch back to Q2ADMIN_REPO=packetflinger/q2admin (and drop the
-# combined-pending-fixes branch entirely) once BOTH fixes are merged
-# upstream - don't let this fork drift into a silent permanent one.
+# Switched back to upstream 2026-08-19: both PRs merged (#27
+# "fix-required-msg-userinfo-key" on 2026-08-09 as 3c07c62, #28
+# "fix-cloud-admin-crashes" on 2026-08-10 as a24e67b) and the fork is gone
+# from GitHub entirely (confirmed via `gh repo list` - not renamed, just
+# absent), presumably deleted once redundant. Re-verified both fixes'
+# actual content against upstream main rather than trusting the merge
+# commit messages alone: required_ui_keys[] no longer includes "msg", and
+# every CA_WriteString call in g_cloud.c passes userinfo.raw. Pinned commit
+# is the merge tip; don't need a fork or an integration branch anymore.
 ARG Q2ADMIN_REPO=https://github.com/packetflinger/q2admin
 ARG Q2ADMIN_COMMIT=a24e67b032240a1e6df1ce4ae4a6e2a56a86b542
 
@@ -202,15 +208,76 @@ ARG OPENFFA_COMMIT=94d1e9c0ba3030095955c8ee9ea8cc980d144ae4
 # and libsqlite3:i386 in the runtime stage - see both apt-get lines below.
 ARG OPENFFA_CONFIG_SQLITE=1
 
+# arena's own game DLL, Rocket Arena 2 - like openffa-xatrix above, was NOT
+# built by this Dockerfile until 2026-08-19: ~/quake2/arena/gamei386.real.so
+# was a manually-produced 2014 binary of unknown provenance, never rebuilt
+# through any tracked process.
+#
+# Niehztog/rocketarena2 is the user's own project: a from-scratch source
+# reconstruction of RA2 (a 1999 mod whose source was never released),
+# recovered from evidence in the shipped binaries (722/730 functions on its
+# `main` branch still assemble byte-identical to the original gamex86.dll).
+# `q2pro-enhancements` (pinned below) takes that reconstruction and rebases
+# the whole of q2pro's baseq2 commit history onto it - 188 commits, done as
+# a genuine rebase against the shared id-3.20 root rather than a hand-port -
+# bringing in the modern game API, frame-number timers, the rewritten
+# savegame system, protocol extensions, and ~20 years of upstream crash/
+# overflow/OOB fixes, while keeping all 43 RA2 cvars, 39 client commands, 111
+# spawn classnames and the grapple intact. The dead GameSpy stats SDK
+# (six vendored files, phoned home to a gamestats.gamespy.com host that's
+# been offline for years, retried forever on every failure) is replaced with
+# a local one - see the statsfile/statsname cvars. Full writeup:
+# doc/q2pro-port.md in that repo.
+#
+# Per that writeup: this is explicitly NOT battle-tested - "the tree has
+# still not been run against a live server, so treat this as materially
+# safer than the reconstruction rather than as audited". A post-port
+# review (not exhaustive, by the author's own account) already found and
+# fixed 15 defects, 3 of them showstoppers that would not have been visible
+# to the compiler: game.maxclients was never initialised (client array
+# allocated for zero entries), a qboolean->bool retype shrank
+# arena_settings_t from 168 to 96 bytes while ra2menus.c still punned it as
+# int[42] (4 OOB writes), and four bool[7] arrays were written through a
+# stale extern int[] in another translation unit (21 bytes OOB, on every
+# map load). Test this at least as thoroughly as any change this project has
+# shipped so far - more, if anything, given the above.
+ARG ROCKETARENA2_REPO=https://github.com/Niehztog/rocketarena2
+ARG ROCKETARENA2_COMMIT=191a10187335ce9be76545b031b122da061fe76b
+
 # THE important knob. Controls the i386 struct-return calling convention
 # q2pro uses for gi.trace() (it applies
 # __attribute__((callee_pop_aggregate_return(0))) plus -mstackrealign).
 #
-#   arena  -> enabled   : its gamei386.real.so is a 2014 build that expects
-#                         the old callee-pops convention. Without this the
-#                         stack drifts 4 bytes after every gi.trace() and the
-#                         mod segfaults dereferencing a bogus trace.ent
-#                         (crash lands in its own SV_PushEntity).
+#   arena  -> STILL enabled as of 2026-08-19, pending a fix - see
+#                         docker-compose.yml's arena service for why this
+#                         cannot just be flipped on its own. Will need to
+#                         become disabled once the ROCKETARENA2_COMMIT
+#                         replacement above is actually deployed to the
+#                         gamedir: arena's current gamei386.real.so is a
+#                         2014 binary expecting the old callee-pops
+#                         convention (without the hack, the stack drifts 4
+#                         bytes after every gi.trace() and the mod segfaults
+#                         dereferencing a bogus trace.ent, crashing in its
+#                         own SV_PushEntity), while the ROCKETARENA2 build
+#                         above is fresh-compiled with this same
+#                         Dockerfile's own modern gcc, same as xatrix's
+#                         gamei386.real.so, hence the modern convention.
+#                         This is UNRELATED to the RA2 game DLL's own
+#                         USE_NEW_GAME_API=1 (see its config.h) - that
+#                         macro only widens GAME_API_VERSION from
+#                         GAME_API_VERSION_OLD(3) to _NEW(3302) inside the
+#                         shared game.h struct layout (gclient_old_t/
+#                         pmove_old_t vs gclient_new_t/pmove_new_t) the game
+#                         DLL compiles against, and q2proded (this Dockerfile
+#                         only ever builds q2proded, never a client) always
+#                         gets USE_NEW_GAME_API=1 unconditionally regardless
+#                         of this flag or any meson option - q2pro's own
+#                         meson.build hardcodes -DUSE_SERVER=1 for the server
+#                         target, and shared.h defines USE_NEW_GAME_API as
+#                         (USE_CLIENT || USE_SERVER) whenever the game DLL
+#                         doesn't override it itself. Confirmed by reading
+#                         q2pro's meson.build/meson_options.txt/shared.h/
+#                         game.h directly, not assumed from doc language.
 #   xatrix -> disabled  : its 2017 build expects the modern convention and
 #                         crashes if this IS enabled.
 #
@@ -351,6 +418,37 @@ RUN set -eu; \
     fi; \
     echo "openffa gamei386.real.so OK (ELF32, has g_warmup, sqlite=${OPENFFA_CONFIG_SQLITE:-off})"
 
+# rocketarena2's Makefile targets a workstation build (native ARCH=x86_64 by
+# default, real "make windows" MinGW cross-targets too) - none of its six
+# stock configurations produce the i386 Linux .so this project needs. M32=
+# -m32 forces every compile+link step to -m32 (same mechanism as q2admin/
+# openffa's CC="gcc -m32" above; this Makefile threads the flag through a
+# dedicated var instead since it also has to compose with MinGW's CC
+# override). ARCH is cosmetic here - it only names the output file
+# (game$(ARCH).so) - set to i386 purely so the built filename matches this
+# project's convention; nothing reads it besides this install line, since
+# the file is renamed on the way out same as q2admin/openffa's builds are.
+# Output installed under a name distinct from openffa's above - both mods'
+# game DLLs are built into every image (harmless, a few extra seconds), but
+# only one is ever actually extracted into a given gamedir at deploy time.
+RUN git clone "$ROCKETARENA2_REPO" /src-ra2 && \
+    cd /src-ra2 && \
+    git checkout --detach "$ROCKETARENA2_COMMIT" && \
+    make build_release M32=-m32 ARCH=i386 && \
+    install -Dm755 release/gamei386.so /out/ra2-gamei386.real.so
+
+# Fail the build rather than ship a silently-wrong engine, same reasoning as
+# every other build-validation step above. statsfile/statsname are cvars
+# unique to this port's local JSON stats log (see the ROCKETARENA2_COMMIT
+# ARG comment) - a genuinely old/unmodified RA2 binary wouldn't have them,
+# so this also catches an accidental wrong-commit/wrong-branch pin, the same
+# failure mode the g_warmup check above exists to catch for openffa.
+RUN set -eu; \
+    readelf -h /out/ra2-gamei386.real.so | grep -q 'ELF32' || { echo 'rocketarena2 gamei386.real.so is not ELF32'; exit 1; }; \
+    strings /out/ra2-gamei386.real.so | grep -q '^statsfile$' \
+        || { echo 'rocketarena2 gamei386.real.so is missing statsfile - wrong commit/branch pinned?'; exit 1; }; \
+    echo "rocketarena2 gamei386.real.so OK (ELF32, has statsfile)"
+
 # ---------------------------------------------------------------------------
 # Runtime stage
 # ---------------------------------------------------------------------------
@@ -398,22 +496,24 @@ RUN useradd -r -u 1000 -U -s /sbin/nologin -M quake2
 
 RUN mkdir -p /opt/quake2 && chown quake2:quake2 /opt/quake2
 
-# q2admin (and, for xatrix, openffa-xatrix's gamei386.real.so that it wraps)
-# land at /opt/q2admin and /opt/openffa, not directly in a gamedir: unlike
-# q2proded, they have to sit *inside* the bind-mounted gamedir at runtime
-# (q2admin dlopens "<gamedir>/gamei386.real.so" - or whatever "gamelibrary"
-# names - relative to the process CWD), so the image can't deliver them
-# there directly, and copying over the operator's file from an entrypoint on
-# every start would silently overwrite a deliberate version choice. Install
-# into a gamedir once, the same "one-time game data preparation" way as
-# before:
+# q2admin (and the real game DLL it wraps - openffa-xatrix for xatrix,
+# rocketarena2 for arena) land at /opt/q2admin, /opt/openffa and
+# /opt/rocketarena2, not directly in a gamedir: unlike q2proded, they have to
+# sit *inside* the bind-mounted gamedir at runtime (q2admin dlopens
+# "<gamedir>/gamei386.real.so" - or whatever "gamelibrary" names - relative
+# to the process CWD), so the image can't deliver them there directly, and
+# copying over the operator's file from an entrypoint on every start would
+# silently overwrite a deliberate version choice. Install into a gamedir
+# once, the same "one-time game data preparation" way as before:
 #   docker create --name q2admin-extract <image> && \
 #   docker cp q2admin-extract:/opt/q2admin/gamei386.so ~/quake2/<gamedir>/ && \
 #   docker cp q2admin-extract:/opt/openffa/gamei386.real.so ~/quake2/xatrix/ && \
+#   docker cp q2admin-extract:/opt/rocketarena2/gamei386.real.so ~/quake2/arena/ && \
 #   docker rm q2admin-extract
 COPY --from=build /out/q2proded /opt/q2pro/q2proded
 COPY --from=build /out/gamei386.so /opt/q2admin/gamei386.so
 COPY --from=build /out/gamei386.real.so /opt/openffa/gamei386.real.so
+COPY --from=build /out/ra2-gamei386.real.so /opt/rocketarena2/gamei386.real.so
 COPY filter-rcon-status.sh /opt/filter-rcon-status.sh
 
 USER quake2
