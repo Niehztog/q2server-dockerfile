@@ -255,8 +255,81 @@ ARG OPENFFA_CONFIG_SQLITE=1
 # - so any map using the standard "pausetime" key on a path_corner-style
 # entity silently lost that delay. Renamed back to "pausetime" with its own
 # st.pausetime float, matching what real .map files actually contain.
+#
+# Bumped 2026-09-01 (c7d0f3a -> 28a8af7, 7 commits on q2pro-enhancements,
+# 2026-08-21 through 2026-08-28): GitHub's three-dot compare API is
+# merge-base-relative and this branch's history has been amended before (see
+# the 2026-08-19 bump above), so it initially made this look like a 22-file
+# change including the old game.maxclients showstopper still being live -
+# false; a real `git diff` between the two exact commits (not the branch
+# compare) gives the true 14-file, +313/-59 picture, and that
+# maxclients/GAME_API_VERSION/struct-layout code isn't touched at all here
+# because it's already the code running in production. Always diff the exact
+# commits, not the branches, when this fork's history has moved - the compare
+# API alone will lie.
+#
+# What actually changed, confirmed by reading the real diff, not just commit
+# subjects: fixes a real NULL-deref (single-spawn-point idarena + side==1
+# could walk G_Find() past the end and deref the unchecked NULL result) -
+# genuinely pre-existing in c7d0f3a, not introduced by this bump. Changes
+# spawn-point selection to place arriving players away from an arena's actual
+# fighters instead of away from the surrounding spectator crowd, falling back
+# to "away from the nearest live body" when nobody's fighting yet - a real
+# gameplay behavior change, verified with an actual A/B playtest (see
+# below), not just read from the source. Also: fixes a spectator trackcam
+# bug (was leaning the view using the camera's own flight-toward-target
+# velocity instead of real player input), plugs two menu memory leaks (one
+# per menu row on every close - a `menuitem_t` allocation that was never
+# freed at all, confirmed by diffing old vs new, not a re-free of anything
+# already-freed - plus one whole leftover menu queue per respawn, freed in
+# PutClientInServer before the client struct's memset, correct ordering),
+# precaches the grapple's remaining assets upfront instead of mid-round, and
+# turns on -Wall, cleaning up everything it flagged (no -Werror, no
+# optimization/architecture flag changes - confirmed zero interaction with
+# this Dockerfile's -m32 cross-compile setup or the ELF32/statsfile
+# post-build checks below). No struct layout, gi.trace()/GAME_ABI_HACK, or
+# spawn_fields[] changes anywhere in this bump.
+#
+# Playtest evidence (packetflinger/libq2-based harness, see project's
+# q2-playtest skill): scenarios/ra2spawn run A/B against native builds of
+# both commits on ra2map19 arena "Diet Smack" - c7d0f3a FAILS both
+# invariants (3 observers scattered onto 3 different spots instead of
+# clustering on one; fighters land 834 units apart when 1223 was available,
+# i.e. the audience's presence was distorting fighter placement), 28a8af7
+# PASSES both cleanly. scenarios/ra2join separately exercised the real
+# production map's actual idarena (ra2map27 arena 8, the side-based pickup-
+# team path, a different selection function than ra2spawn covers) with 4
+# clients - passes identically on both commits, confirming no regression
+# there.
+#
+# This bump turned out to fix a real crash the live c7d0f3a build had just
+# had in production - found while checking why the arena container's
+# RestartCount had gone from 0 to 1 partway through this same bump's own
+# testing, not something this update was going out looking for. A real
+# client's packet triggered a SIGSEGV inside p_hud.c's
+# Serverwide_ScoreboardMessage at 2026-09-01T19:55:36Z (confirmed via a real
+# core dump: gdb in a throwaway container, q2proded + the exact c7d0f3a
+# gamei386.real.so that was actually running, both pulled from the crashed
+# container/its backed-up binary, not assumed). Root cause: that function
+# built a team-name string with `strncpy` into a buffer, patched up with a
+# manual `teamname[sizeof(teamname)-1] = 0` that doesn't fix an
+# oversized-source overread the way `strncpy` alone can produce, plus a bare
+# `sprintf(teamname, "None")` for the no-team case - exactly the class of
+# bug this project has been bitten by before (see the q2admin-cloud
+# section's raw `strcpy` heap overflow). c7d0f3a -> 28a8af7 replaces both
+# with `Q_strlcpy`, as part of the "sixteen defects"/-Wall commits already
+# described above, not called out on its own in any commit subject. The
+# trigger path is routine, not an edge case: `MoveClientToIntermission` sets
+# `scoremode = 2` for every client at the end of any map/round, and
+# `ClientEndServerFrame` fires `DeathmatchScoreboardMessage` ->
+# `Serverwide_ScoreboardMessage` for each of them within 32 frames once
+# that's set - so any real match simply finishing normally was enough.
+# Deployed anyway (the fix was already what this bump was doing) and
+# confirmed stable afterward: `RestartCount: 0` and answering status queries
+# as of this bump landing, gamedate confirms the freshly-built binary is
+# what's actually loaded.
 ARG ROCKETARENA2_REPO=https://github.com/Niehztog/rocketarena2
-ARG ROCKETARENA2_COMMIT=c7d0f3a27ff830f4f3e619fd82f8f592057a686a
+ARG ROCKETARENA2_COMMIT=28a8af749fb973de2f67d9194d9f99e59a953d25
 
 # THE important knob. Controls the i386 struct-return calling convention
 # q2pro uses for gi.trace() (it applies
