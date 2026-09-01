@@ -565,4 +565,20 @@ WORKDIR /opt/quake2
 # "docker logs" is live rather than arriving in delayed batches; stty -onlcr
 # stops the PTY translating \n to \r\n (which would otherwise break the
 # rcon filter's line matching).
-CMD script -qefc "stty -onlcr; /opt/q2pro/q2proded +set basedir /opt/quake2 +set libdir /opt/quake2 +set homedir /opt/quake2 +set dedicated 1 +set game $Q2_GAMEDIR +set ip $Q2_IP +set port $Q2_PORT +set net_port $Q2_PORT +set map_override_path maps +exec server1.cfg +exec $Q2_OVERRIDE_CFG" /dev/null 2>&1 | /bin/sh /opt/filter-rcon-status.sh
+#
+# The final `tee -a` persists that same filtered stream into the
+# bind-mounted gamedir (/opt/quake2/$Q2_GAMEDIR -> host ~/quake2/<gamedir>),
+# independent of Docker's own container-scoped json-file driver. That
+# driver's history is lost whenever the CONTAINER is recreated (not just
+# restarted) - which happens on every image rebuild/`docker compose up -d`,
+# and both arena and xatrix have been recreated several times already, most
+# recently 2026-08-19; nothing from before that survived in `docker logs`.
+# tee reads after filter-rcon-status.sh, not before, so the persisted file
+# carries the same WallFly/timer/spawn-count noise already stripped rather
+# than a second, unfiltered copy of it - `docker logs` and this file show
+# identical content, one just outlives the container. mkdir -p first since
+# tee won't create the parent directory itself, and a fresh bind-mount
+# wouldn't have logs/ yet. Rotation is handled outside the container - see
+# rotate-console-logs.sh - since tee has no size cap of its own and this
+# CMD's shell has no cheap way to enforce one mid-stream.
+CMD mkdir -p /opt/quake2/$Q2_GAMEDIR/logs && script -qefc "stty -onlcr; /opt/q2pro/q2proded +set basedir /opt/quake2 +set libdir /opt/quake2 +set homedir /opt/quake2 +set dedicated 1 +set game $Q2_GAMEDIR +set ip $Q2_IP +set port $Q2_PORT +set net_port $Q2_PORT +set map_override_path maps +exec server1.cfg +exec $Q2_OVERRIDE_CFG" /dev/null 2>&1 | /bin/sh /opt/filter-rcon-status.sh | tee -a /opt/quake2/$Q2_GAMEDIR/logs/console.log
