@@ -1,3 +1,24 @@
+> ## This repository has moved, and is no longer updated
+>
+> On 2026-09-18 it was split in two, because it mixed a Docker setup anyone
+> could use with one person's deployment of it:
+>
+> - **The general half — the `Dockerfile`, the engine patches,
+>   `filter-rcon-status.sh` and the colosseum deploy and navigation-mesh
+>   tooling — is now `server/` in
+>   [Niehztog/colosseum](https://github.com/Niehztog/colosseum)**, which is
+>   where it is developed from here on. That is where to look for anything
+>   below that still interests you.
+> - The deployment half — one host's compose file, gamedirs, ports, rotations
+>   and override cfgs — moved to a private repository, where it always
+>   belonged.
+>
+> Everything is left in place below, and the history is intact: what was here
+> worked, and this is an archive of it rather than a redirect. It is simply
+> not where the work continues, and it will drift out of date — the engine
+> patch that makes the game library's bots visible to the server browser, for
+> one, never reached this copy of the `Dockerfile`.
+
 # q2server-dockerfile
 
 Docker setup for three Quake II-engine dedicated servers, managed together via
