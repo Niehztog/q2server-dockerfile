@@ -47,6 +47,48 @@ The game DLLs are 32-bit, so the engine must be too. `PKG_CONFIG_LIBDIR` is
 pinned to the i386 `.pc` directory — without it meson finds the host's 64-bit
 zlib and the link fails with `libz.so: file in wrong format`.
 
+### Engine patches — they live in the colosseum repo
+
+The engine carries patches, and **they are not in this repository**. They live
+in `colosseum/server/`, which documents each one and checks it
+(`server/enginepatch.sh`). This build copies `server/q2pro/` out of the
+`colosseum-src` build context and applies every patch in filename order right
+after the checkout.
+
+| Patch | What it does |
+|---|---|
+| `0001-status-report-game-created-bots.patch` | Makes the engine report the game library's bots as players |
+
+**Why 0001 exists.** Gladiator-derived bots — colosseum's, and every Q2 mod's
+descended from Mr. Elusive's game source — live entirely inside the *game*: the
+bot gets one of the game's client edicts, but nothing connects, so the engine
+holds no `client_t` for it. Both places the engine reports players from walk
+`sv_clientlist`, which only `SV_DirectConnect` appends to, so a server with
+eight bots playing advertises itself as empty. That is true of id's 1997 server,
+yquake2 and q2repro alike, not just q2pro. The patch feeds those bots to the UDP
+status reply, the `N/M` count in `info`, and `rcon status` — **that last one is
+what WallFly polls** (see `filter-rcon-status.sh`), so it is the one that
+decides what the public listing shows. `set sv_status_show_bots 0` reverts every
+reply to stock output without a restart.
+
+**This is why `--target server` now needs `colosseum-src`.** It did not before —
+that was the point of merging the two Dockerfiles, and it is written down on the
+colosseum target. `docker-compose.yml` supplies the context for both services
+under `additional_contexts`; a hand-rolled build needs the flag:
+
+```sh
+docker build --target server \
+    --build-context colosseum-src=/home/nils/projects/colosseum -t q2pro-server .
+```
+
+Without it the build fails with `failed to resolve source metadata for
+docker.io/library/colosseum-src`, which reads like a missing image and means a
+missing flag.
+
+**Bumping `Q2PRO_COMMIT` means refreshing the patches in the same commit** — in
+the colosseum repo — because a patch that no longer applies fails the build
+rather than being skipped.
+
 ### `GAME_ABI_HACK` — the one build arg that matters
 
 `docker-compose.yml` passes this per service. **The two values are not
@@ -64,8 +106,9 @@ looks like a mod bug rather than a build-flag mistake. It is a whole-binary
 compile-time switch, so one binary cannot serve both mods; that is why there
 are two images. Don't merge them into one.
 
-The build fails fast if the result isn't ELF32 or if `config.h` doesn't match
-the requested setting, rather than shipping a silently-wrong engine.
+The build fails fast if the result isn't ELF32, if `config.h` doesn't match the
+requested setting, or if the carried patches didn't reach the binary, rather
+than shipping a silently-wrong engine.
 
 ## One-time game data preparation
 
@@ -111,34 +154,26 @@ client outright once a wrapped mod declares the former, and heap-overflowing
 a fixed 40-byte IP buffer for any client connecting over IPv6 once a mod
 declares the latter.
 
-### 2. `arena/gamei386.real.so` — `PT_GNU_STACK` patch
+### 2. `gamei386.real.so` — the game library
 
-Only arena needs this; xatrix's 2017 build already has the header.
-
-Arena's `gamei386.real.so` carries no `PT_GNU_STACK` header, so modern glibc
-concludes it wants an **executable stack** and asks the kernel for one at
-`dlopen()` time. The kernel refuses, and loading fails outright:
-
-```
-dlopen failed: cannot enable executable stack as shared object requires:
-Invalid argument
-```
-
-Add an explicit non-exec header:
+Both servers run **colosseum**, which this image does not build: its repo is
+private, so the pinned `git clone` the main `Dockerfile` uses cannot
+authenticate, and its build context has to be a local clone. the same `Dockerfile` builds it under `--target colosseum`, and `scripts/deploy-colosseum-live.sh` installs it — along with
+`gladiator.so`, `pak7.pak`, the loose bot list and the `.aas` navigation
+meshes — into a live gamedir:
 
 ```
-./add-gnu-stack.py ~/quake2/arena/gamei386.real.so /tmp/patched.so
-install -m755 /tmp/patched.so ~/quake2/arena/gamei386.real.so
-
-readelf -l ~/quake2/arena/gamei386.real.so | grep -A1 GNU_STACK   # RW, no E
-readelf -d ~/quake2/arena/gamei386.real.so | grep '(REL)'         # must be 0x9ad4
+docker build --target colosseum --build-context colosseum-src=~/projects/colosseum -t colosseum .
+./scripts/deploy-colosseum-live.sh arena
+./scripts/deploy-colosseum-live.sh xatrix
+docker compose restart q2pro-arena q2pro-xatrix
 ```
 
-> **Do not use `patchelf --clear-execstack` instead.** It silently corrupts
-> this binary, rewriting `DT_REL` into `.text` and relocating `.hash`; the
-> loader then reads code as relocation entries and segfaults inside
-> `ld-linux.so.2`. `add-gnu-stack.py` appends a fresh program header table at
-> end-of-file, touching no existing byte, and refuses an already-patched file.
+That script is idempotent and parameterised by `Q2_ROOT`, so it can be
+rehearsed against a copy of the live tree before it touches `~/quake2`. It
+takes one backup per gamedir, which is also the rollback:
+`gamei386.real.so.bak-<date>-pre-colosseum` and
+`server1.cfg.bak-<date>-pre-colosseum`, plus a restart.
 
 ### 3. Per-gamedir override cfg
 

@@ -1,2 +1,22 @@
 .env
 q2-config-backup-*.tar.gz
+
+# THIS REPOSITORY IS PUBLIC.  The two patterns below cover local working
+# artifacts that must never be pushed.  Both were checked, not assumed:
+#
+#   *.log   the archived pre-Docker console logs kept in a working copy
+#           (r1q2-arena/xatrix-2026-08-03.log, ~600MB together) carry player
+#           IP ADDRESSES and player names - 118 and 86 distinct addresses
+#           respectively.  That is personal data.  No .log has ever been
+#           tracked here.
+#   *.html  the review and audit write-ups generated in a working copy.
+#           q2-server-review.html quoted the servers' admincode in cleartext
+#           while correctly masking rcon_password two lines away, so that was
+#           an oversight in the document rather than a decision.
+#
+# Neither was ever committed - a sweep of all 35 commits found no credential,
+# no private key and no public IP in any blob, and no .env, .log, .html or
+# CLAUDE.md among the sixteen filenames this repository has ever held.  But
+# nothing stopped a `git add .` from changing that, which is what these are for.
+*.log
+*.html

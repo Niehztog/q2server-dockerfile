@@ -1,4 +1,26 @@
-# Shared image for the arena and xatrix servers, running q2pro.
+# TWO TARGETS, ONE FILE.
+#
+#   --target server      the image both live game servers run: q2pro's engine
+#                        plus q2admin, and nothing else.  THE DEFAULT, so a
+#                        bare `docker build .` gives you this.
+#
+#   --target colosseum   the game library those servers load, plus the bot
+#                        library, its assets and bspc.  Nothing runs from it in
+#                        production: scripts/deploy-colosseum-live.sh copies
+#                        the artifacts out of it into the bind-mounted gamedir,
+#                        and scripts/make-colosseum-aas.sh runs it as a
+#                        throwaway server to compute navigation meshes.
+#
+# They share the build stage, so the engine is compiled ONCE for both.  Until
+# 2026-09-18 the second lived in a separate Dockerfile-colosseum that cloned
+# and built q2pro all over again from the same pinned commit.
+#
+# Merging them costs the server target nothing, and that is the point: the
+# colosseum source arrives as a NAMED BUILD CONTEXT rather than a clone,
+# because its repository is private, and BuildKit resolves a named context
+# only for stages it actually builds.  `--target server` therefore needs no
+# colosseum checkout, no extra flag, and is unaffected by anything that
+# changes in it -- verified by building it with the context absent.
 #
 # Builds q2pro from source at a pinned commit, so the image is reproducible
 # and the (safety-critical) ABI build flag is explicit rather than baked into
@@ -83,300 +105,34 @@ ARG Q2PRO_COMMIT=601a8df8433b0c50dbbe37c0716c3793fff140a7
 ARG Q2ADMIN_REPO=https://github.com/packetflinger/q2admin
 ARG Q2ADMIN_COMMIT=a24e67b032240a1e6df1ce4ae4a6e2a56a86b542
 
-# openffa-xatrix (the actual game DLL xatrix runs, wrapped by q2admin above -
-# q2admin dlopens it as "gamei386.real.so") was, until 2026-08-06, NOT built
-# by this Dockerfile at all: ~/quake2/xatrix/gamei386.real.so was a manually
-# produced binary dated 2017-05-17, never rebuilt through any tracked
-# process. Discovered when enabling g_warmup (a pre-match ready-up/countdown
-# feature) had zero effect on the live server despite the cvar taking the
-# value fine - `strings` on the actual deployed .so showed zero occurrences
-# of g_warmup/g_countdown_time anywhere, because that feature was only added
-# upstream on 2022-11-03 (71a3fbf, "Add warmup support"), five years after
-# the deployed build. Confirmed the fork's current HEAD genuinely has it
-# (`git merge-base --is-ancestor 71a3fbf HEAD`) despite HEAD's own tip commit
-# showing an author date of 2017-05-17 - that's just the fork's own last
-# local patch before the 2026-08-04 rebase onto a modern upstream base (see
-# q2-openffa-xatrix-rebase in project memory); committer date on that same
-# commit is 2026-08-04, and it carries 222 total commits, not a handful.
-# Built the same way as q2admin above: pinned commit, i386 cross-compile,
-# verified before shipping. CONFIG_SQLITE=1 below enables the per-player
-# stats database (g_sql_database); CONFIG_CURL and CONFIG_UDP - the two
-# *alternative* stats backends - are deliberately left off: g_sqlite.c/
-# g_curl.c/g_udp.c all define the same G_LogClient/G_OpenDatabase/etc.
-# function names, so more than one of the three enabled at once fails the
-# link with duplicate symbols. Also relevant if the engine's sv_fps is ever
-# changed from its default: openffa hardcodes its own HZ/FRAMETIME to a
-# fixed 10 unless CONFIG_VARIABLE_SERVER_FPS is also set, in which case
-# they track the engine's actual tick rate instead - not enabled, nothing
-# currently overrides sv_fps from its default.
-#
-# Bumped 2026-08-06 (9db7aae -> 34888fa, own fork-local fixes, not
-# upstream; squashed by hand a couple of times along the way, so don't go
-# looking for df9d07b/1256477/etc. on the remote - only this hash matters):
-#
-# 1. Enabling g_warmup broke the MOTD system four independent, compounding
-#    ways, all stemming from ClientBegin()'s g_warmup branch and its
-#    downstream effects: (a) it overwrites pers.connected from
-#    CONN_PREGAME to CONN_SPECTATOR synchronously, and the auto-show
-#    trigger's outer gate only ever checked for CONN_PREGAME; (b) it also
-#    does `enter_framenum -= 5*HZ` (a hack for G_SpecRateLimited(),
-#    unrelated to MOTD), which corrupted the trigger's exact-equality
-#    delta check the same way; (c) the same branch opens the join menu
-#    immediately (layout=LAYOUT_MENU), which the trigger deliberately
-#    yields to (layout==LAYOUT_NONE required) - but selecting "Enter the
-#    game" from that menu never called PMenu_Close() (unlike every other
-#    menu selection), so layout stayed stuck at LAYOUT_MENU forever once a
-#    player actually joined, permanently blocking the timing check; (d)
-#    found after (a)-(c) were deployed and auto-show confirmed working,
-#    but manually typing "motd" later did nothing: the 15s dismiss check
-#    computed its delta from the same connect-time resp.motd_framenum,
-#    never refreshed, so any manual re-trigger a while after connecting
-#    got immediately re-dismissed by the very next frame tick, too fast to
-#    perceive. Fixed all four: broadened the state check, decoupled the
-#    auto-show timer onto its own resp.motd_framenum field, converted both
-#    delta checks from exact-equality to >= with a one-shot
-#    resp.motd_shown latch, added the missing PMenu_Close() call, and
-#    added a second resp.motd_shown_framenum stamped by Cmd_Motd_f itself
-#    on every actual display (auto or manual) so the dismiss timer is
-#    always relative to the current display, not the original connect.
-#
-# 2. Added "motd" to Cmd_Commands_f's hardcoded help list - it was never
-#    in there (same gap in the README's own client-commands list),
-#    unrelated to the g_warmup fixes above, just a pre-existing
-#    documentation gap noticed once the feature was actually in use.
-#
-# Bumped again 2026-08-06 (34888fa -> 96f9b73): the fork owner's own
-# follow-up work, not mine - history got rewritten again along the way
-# (the two fixes above now live at different hashes than described, same
-# content though) so only the tip hash matters. Includes a genuine
-# refinement of fix #1 above: motd_framenum/motd_shown moved from
-# client_respawn_t (resp) to client_persistant_t (pers), because resp is
-# ALSO wiped by ordinary spectator respawns (typing "observe"), not just
-# level resets/new connects - under the old placement, switching to
-# spectator mid-match re-armed the MOTD auto-show, not just genuine new
-# levels. ClientBegin() still explicitly re-arms both fields on every
-# level load, so "shows again each map" (matching q2admin's original
-# documented intent) is preserved; only the unwanted "also re-arms on any
-# spectator toggle" side effect is gone. Plus 5 unrelated fixes to the
-# imported xatrix 3.20 weapon/entity code: two real memory-safety bugs
-# (a use-after-free in Trap_Think(), an unchecked G_Find() result crash
-# in misc_viper_missile_use()), several xatrix entities that were ticking
-# every frame or never firing at all because they stored think times as
-# level.time (seconds) instead of frame numbers, a trap throw-speed bug
-# (same frames-vs-seconds mixup) plus a missing weapon-model index that
-# left WEAP_TRAP unreachable and capable of an out-of-bounds inventory
-# write if g_weapon_have/g_weapon_initial ever included its bit, xatrix
-# weapons (Ionripper/Phalanx/Trap) and DualFire finally wired into the
-# accuracy/damage stats and item-ban systems (directly relevant now that
-# CONFIG_SQLITE is on), and a build fix for the (unused here, XATRIX is
-# unconditionally #define'd in g_local.h) non-xatrix build configuration.
-# Bumped again 2026-08-06 (96f9b73 -> 94d1e9c): another forced-update
-# rewrite (this fork's history moves routinely now, not just at big
-# upstream-merge points - see the project memory on this). The 5 fixes
-# above all carried forward under new hashes, same content. 4 new fixes
-# on top:
-# - Cmd_WeapNext_f/Cmd_WeapPrev_f (g_cmds.c) looped one step too far and
-#   could re-select the weapon already held; for the HyperBlaster/Railgun
-#   that calls Use_Weapon2() on itself, silently toggling to the
-#   Ionripper/Phalanx instead of just cycling normally.
-# - SV_Push (g_phys.c) lost the epsilon gi.linkentity() normally pads
-#   absmin/absmax with once SV_RealBoundingBox started computing an exact
-#   box, so entities sitting exactly flush against a mover (door/plat)
-#   could be excluded from its "am I about to crush something" test.
-# - G_KillBox's spawn-telefrag trace (g_utils.c) included
-#   CONTENTS_PLAYERCLIP|CONTENTS_WINDOW in its mask; ordinary world solid
-#   brushes block regardless of mask, so on maps whose spawn points sit
-#   flush with the floor the world itself, not the occupying player, was
-#   reported as the hit and the telefrag never happened. Narrowed to
-#   CONTENTS_MONSTER only.
-# - DualFire shared EF_QUAD's glow (p_view.c), making it indistinguishable
-#   from real Quad Damage; switched to the already-defined EF_DOUBLE, plus
-#   its own firing-cue sound (items/quadfire3.wav, already a precached
-#   asset). Also: Pickup_Powerup's dropped-DualFire timeout branch
-#   (g_items.c) never ran under DF_INSTANT_ITEMS, a Trap-specific
-#   ammo-drop guard, a proper Trap ammo-count floor at zero
-#   (weapon_trap_fire, p_weapon.c), a Phalanx attempt-count fix so hit%
-#   can't read over 100, missing obituary strings for the 3 trap-related
-#   MOD_ constants (all pre-existing, unused until now), and
-#   Trap_Think's kill-credit MOD switched from generic MOD_EXPLOSIVE to
-#   MOD_TRAP_SPLASH so the trap's owner is actually credited.
-ARG OPENFFA_REPO=https://github.com/Niehztog/openffa-xatrix
-ARG OPENFFA_COMMIT=94d1e9c0ba3030095955c8ee9ea8cc980d144ae4
-
-# Enables g_sqlite.c (see the ARG comment above for why CONFIG_CURL/
-# CONFIG_UDP must stay off if this is on). Needs libsqlite3-dev:i386 here
-# and libsqlite3:i386 in the runtime stage - see both apt-get lines below.
-ARG OPENFFA_CONFIG_SQLITE=1
-
-# arena's own game DLL, Rocket Arena 2 - like openffa-xatrix above, was NOT
-# built by this Dockerfile until 2026-08-19: ~/quake2/arena/gamei386.real.so
-# was a manually-produced 2014 binary of unknown provenance, never rebuilt
-# through any tracked process.
-#
-# Niehztog/rocketarena2 is the user's own project: a from-scratch source
-# reconstruction of RA2 (a 1999 mod whose source was never released),
-# recovered from evidence in the shipped binaries (722/730 functions on its
-# `main` branch still assemble byte-identical to the original gamex86.dll).
-# `q2pro-enhancements` (pinned below) takes that reconstruction and rebases
-# the whole of q2pro's baseq2 commit history onto it - 188 commits, done as
-# a genuine rebase against the shared id-3.20 root rather than a hand-port -
-# bringing in the modern game API, frame-number timers, the rewritten
-# savegame system, protocol extensions, and ~20 years of upstream crash/
-# overflow/OOB fixes, while keeping all 43 RA2 cvars, 39 client commands, 111
-# spawn classnames and the grapple intact. The dead GameSpy stats SDK
-# (six vendored files, phoned home to a gamestats.gamespy.com host that's
-# been offline for years, retried forever on every failure) is replaced with
-# a local one - see the statsfile/statsname cvars. Full writeup:
-# doc/q2pro-port.md in that repo.
-#
-# Per that writeup: this is explicitly NOT battle-tested - "the tree has
-# still not been run against a live server, so treat this as materially
-# safer than the reconstruction rather than as audited". A post-port
-# review (not exhaustive, by the author's own account) already found and
-# fixed 15 defects, 3 of them showstoppers that would not have been visible
-# to the compiler: game.maxclients was never initialised (client array
-# allocated for zero entries), a qboolean->bool retype shrank
-# arena_settings_t from 168 to 96 bytes while ra2menus.c still punned it as
-# int[42] (4 OOB writes), and four bool[7] arrays were written through a
-# stale extern int[] in another translation unit (21 bytes OOB, on every
-# map load). Test this at least as thoroughly as any change this project has
-# shipped so far - more, if anything, given the above.
-#
-# Bumped 2026-08-19 (191a101 -> c7d0f3a, same "fix fifteen defects" commit
-# amended, not a new one - title unchanged, hash isn't): fixes the
-# arena-assignment regression this project's own pre-production testing
-# found in 191a101 (see project memory q2-rocketarena2-port) - map entities'
-# "arena" key is back in g_spawn.c's spawn_fields[] (FOFS(arena), F_INT),
-# confirmed via diff, not just the commit message. Also fixes an unrelated
-# second silently-dropped map key found the same way: the classic Quake2
-# func_train "pausetime" key (a float, first-time-only extra delay) had been
-# mis-keyed in the field table as "pause_framenum" - a real but differently
-# named field on monsterinfo_t (monster AI pausing, untouched, still an int)
-# - so any map using the standard "pausetime" key on a path_corner-style
-# entity silently lost that delay. Renamed back to "pausetime" with its own
-# st.pausetime float, matching what real .map files actually contain.
-#
-# Bumped 2026-09-01 (c7d0f3a -> 28a8af7, 7 commits on q2pro-enhancements,
-# 2026-08-21 through 2026-08-28): GitHub's three-dot compare API is
-# merge-base-relative and this branch's history has been amended before (see
-# the 2026-08-19 bump above), so it initially made this look like a 22-file
-# change including the old game.maxclients showstopper still being live -
-# false; a real `git diff` between the two exact commits (not the branch
-# compare) gives the true 14-file, +313/-59 picture, and that
-# maxclients/GAME_API_VERSION/struct-layout code isn't touched at all here
-# because it's already the code running in production. Always diff the exact
-# commits, not the branches, when this fork's history has moved - the compare
-# API alone will lie.
-#
-# What actually changed, confirmed by reading the real diff, not just commit
-# subjects: fixes a real NULL-deref (single-spawn-point idarena + side==1
-# could walk G_Find() past the end and deref the unchecked NULL result) -
-# genuinely pre-existing in c7d0f3a, not introduced by this bump. Changes
-# spawn-point selection to place arriving players away from an arena's actual
-# fighters instead of away from the surrounding spectator crowd, falling back
-# to "away from the nearest live body" when nobody's fighting yet - a real
-# gameplay behavior change, verified with an actual A/B playtest (see
-# below), not just read from the source. Also: fixes a spectator trackcam
-# bug (was leaning the view using the camera's own flight-toward-target
-# velocity instead of real player input), plugs two menu memory leaks (one
-# per menu row on every close - a `menuitem_t` allocation that was never
-# freed at all, confirmed by diffing old vs new, not a re-free of anything
-# already-freed - plus one whole leftover menu queue per respawn, freed in
-# PutClientInServer before the client struct's memset, correct ordering),
-# precaches the grapple's remaining assets upfront instead of mid-round, and
-# turns on -Wall, cleaning up everything it flagged (no -Werror, no
-# optimization/architecture flag changes - confirmed zero interaction with
-# this Dockerfile's -m32 cross-compile setup or the ELF32/statsfile
-# post-build checks below). No struct layout, gi.trace()/GAME_ABI_HACK, or
-# spawn_fields[] changes anywhere in this bump.
-#
-# Playtest evidence (packetflinger/libq2-based harness, see project's
-# q2-playtest skill): scenarios/ra2spawn run A/B against native builds of
-# both commits on ra2map19 arena "Diet Smack" - c7d0f3a FAILS both
-# invariants (3 observers scattered onto 3 different spots instead of
-# clustering on one; fighters land 834 units apart when 1223 was available,
-# i.e. the audience's presence was distorting fighter placement), 28a8af7
-# PASSES both cleanly. scenarios/ra2join separately exercised the real
-# production map's actual idarena (ra2map27 arena 8, the side-based pickup-
-# team path, a different selection function than ra2spawn covers) with 4
-# clients - passes identically on both commits, confirming no regression
-# there.
-#
-# This bump turned out to fix a real crash the live c7d0f3a build had just
-# had in production - found while checking why the arena container's
-# RestartCount had gone from 0 to 1 partway through this same bump's own
-# testing, not something this update was going out looking for. A real
-# client's packet triggered a SIGSEGV inside p_hud.c's
-# Serverwide_ScoreboardMessage at 2026-09-01T19:55:36Z (confirmed via a real
-# core dump: gdb in a throwaway container, q2proded + the exact c7d0f3a
-# gamei386.real.so that was actually running, both pulled from the crashed
-# container/its backed-up binary, not assumed). Root cause: that function
-# built a team-name string with `strncpy` into a buffer, patched up with a
-# manual `teamname[sizeof(teamname)-1] = 0` that doesn't fix an
-# oversized-source overread the way `strncpy` alone can produce, plus a bare
-# `sprintf(teamname, "None")` for the no-team case - exactly the class of
-# bug this project has been bitten by before (see the q2admin-cloud
-# section's raw `strcpy` heap overflow). c7d0f3a -> 28a8af7 replaces both
-# with `Q_strlcpy`, as part of the "sixteen defects"/-Wall commits already
-# described above, not called out on its own in any commit subject. The
-# trigger path is routine, not an edge case: `MoveClientToIntermission` sets
-# `scoremode = 2` for every client at the end of any map/round, and
-# `ClientEndServerFrame` fires `DeathmatchScoreboardMessage` ->
-# `Serverwide_ScoreboardMessage` for each of them within 32 frames once
-# that's set - so any real match simply finishing normally was enough.
-# Deployed anyway (the fix was already what this bump was doing) and
-# confirmed stable afterward: `RestartCount: 0` and answering status queries
-# as of this bump landing, gamedate confirms the freshly-built binary is
-# what's actually loaded.
-ARG ROCKETARENA2_REPO=https://github.com/Niehztog/rocketarena2
-ARG ROCKETARENA2_COMMIT=28a8af749fb973de2f67d9194d9f99e59a953d25
-
 # THE important knob. Controls the i386 struct-return calling convention
 # q2pro uses for gi.trace() (it applies
 # __attribute__((callee_pop_aggregate_return(0))) plus -mstackrealign).
 #
-#   arena  -> disabled as of 2026-08-19 (was enabled until then - arena's
-#                         old gamei386.real.so was a 2014 binary expecting
-#                         the old callee-pops convention; without the hack
-#                         the stack drifts 4 bytes after every gi.trace()
-#                         and the mod segfaults dereferencing a bogus
-#                         trace.ent, crashing in its own SV_PushEntity).
-#                         That binary is retired - see the
-#                         ROCKETARENA2_COMMIT ARG above - and the
-#                         replacement is fresh-compiled with this same
-#                         Dockerfile's own modern gcc, same as xatrix's
-#                         gamei386.real.so, hence the modern convention.
-#                         Confirmed the hard way while testing the switch:
-#                         built and ran the new RA2 binary against an
-#                         engine still built with 'enabled' by mistake (a
-#                         leftover docker-compose.yml value) - immediate
-#                         SIGSEGV on server init, right after the MOTD
-#                         loads, confirmed via gdb against the actual core
-#                         dump. The two must always change together.
-#                         This is UNRELATED to the RA2 game DLL's own
-#                         USE_NEW_GAME_API=1 (see its config.h) - that
-#                         macro only widens GAME_API_VERSION from
-#                         GAME_API_VERSION_OLD(3) to _NEW(3302) inside the
-#                         shared game.h struct layout (gclient_old_t/
-#                         pmove_old_t vs gclient_new_t/pmove_new_t) the game
-#                         DLL compiles against, and q2proded (this Dockerfile
-#                         only ever builds q2proded, never a client) always
-#                         gets USE_NEW_GAME_API=1 unconditionally regardless
-#                         of this flag or any meson option - q2pro's own
-#                         meson.build hardcodes -DUSE_SERVER=1 for the server
-#                         target, and shared.h defines USE_NEW_GAME_API as
-#                         (USE_CLIENT || USE_SERVER) whenever the game DLL
-#                         doesn't override it itself. Confirmed by reading
-#                         q2pro's meson.build/meson_options.txt/shared.h/
-#                         game.h directly, not assumed from doc language.
-#   xatrix -> disabled  : its 2017 build expects the modern convention and
-#                         crashes if this IS enabled.
+# DISABLED FOR BOTH SERVERS as of 2026-09-18, because both now run colosseum,
+# which this project builds with a modern gcc and which therefore expects the
+# modern caller-pops convention. Enabling it against such a build drifts the
+# stack 4 bytes after every gi.trace() and the mod segfaults dereferencing a
+# bogus trace.ent, usually inside its own SV_PushEntity - confirmed via gdb on
+# a real core dump on 2026-08-19, when an engine built with 'enabled' by
+# mistake met a freshly-compiled game library.
+#
+# It only ever mattered for ancient binaries: arena ran a 2014
+# gamei386.real.so until 2026-08-19 that genuinely needed 'enabled', while
+# xatrix's 2017 build needed it off - which is the whole reason there is one
+# image per gamedir. With both on colosseum the two images now differ only in
+# runtime env and could be collapsed into one; left alone because that means
+# recreating both live containers for no functional gain.
+#
+# UNRELATED to USE_NEW_GAME_API, which q2proded always gets unconditionally:
+# q2pro's meson.build hardcodes -DUSE_SERVER=1 for the server target and
+# shared.h defines USE_NEW_GAME_API as (USE_CLIENT || USE_SERVER) whenever the
+# game DLL does not override it itself. Read out of q2pro's
+# meson.build/meson_options.txt/shared.h/game.h directly, not assumed.
 #
 # It is a whole-binary compile-time switch, so one engine binary cannot serve
-# both mods - hence one image per gamedir, with this passed per service in
-# docker-compose.yml. Getting it backwards produces a server that starts
-# fine and then dies on the first map, so do not "simplify" the two images
-# into one.
+# two mods of different vintages. Getting it backwards produces a server that
+# starts fine and then dies on the first map.
 ARG GAME_ABI_HACK=disabled
 
 # q2pro is pure C (no C++), needs meson >= 0.59 - trixie's packaged meson is
@@ -388,7 +144,7 @@ RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selectio
     apt-get install -y --no-install-recommends \
         git ca-certificates meson ninja-build pkg-config make \
         gcc gcc-multilib libc6-dev-i386 zlib1g-dev:i386 libssl-dev:i386 \
-        libsqlite3-dev:i386 && \
+        && \
     rm -rf /var/lib/apt/lists/*
 
 # The game DLLs are 32-bit, so the engine must be too.
@@ -421,9 +177,39 @@ RUN printf '%s\n' \
 # never errors on an unknown name. Confirmed via byte-grep of a build
 # without this flag: zero occurrences of "ANTICHEAT", "anticheat.r1ch.net",
 # or any sv_anticheat_* name anywhere in the resulting q2proded binary.
+
+# THE ENGINE PATCHES COME FROM THE COLOSSEUM REPOSITORY, not from this one.
+# colosseum/server/ is where they live, where they are documented, and where
+# they are checked (its server/enginepatch.sh) -- that is a directory in the
+# colosseum tree and has nothing to do with this file's `server` TARGET, which
+# happens to share the word. This is only the build that applies them, in
+# filename order, straight after the checkout.
+#
+# 0001 makes the engine report the game library's bots. A Gladiator-derived
+# bot holds no client_t, so a stock engine reports a server with eight bots
+# playing as empty -- in the browser and in the `rcon status` WallFly polls
+# (see filter-rcon-status.sh). That is true of every Q2 engine including id's
+# own; the patch header has the detail.
+#
+# WHAT THIS COSTS: `--target server` now resolves colosseum-src as well, where
+# before only `--target colosseum` did, so the live server build needs the
+# clone. The comment on that target below used to record the opposite and has
+# been corrected. It is a deliberate trade: one copy of a patch, in the
+# repository that owns it, beats two copies that drift apart.
+#
+# A patch that no longer applies fails the build rather than being skipped,
+# which is what pins Q2PRO_COMMIT and colosseum/server/ together: bump the pin
+# and refresh the patch in the same commit.
+COPY --from=colosseum-src server/q2pro/ /patches/
+
 RUN git clone "$Q2PRO_REPO" /src && \
     cd /src && \
     git checkout --detach "$Q2PRO_COMMIT" && \
+    for p in /patches/*.patch; do \
+        [ -e "$p" ] || continue; \
+        echo "applying $(basename "$p")"; \
+        git apply --whitespace=nowarn "$p" || exit 1; \
+    done && \
     PKG_CONFIG_LIBDIR=/usr/lib/i386-linux-gnu/pkgconfig PKG_CONFIG_PATH= \
       meson setup build-i386 \
         --cross-file /i386-linux.txt \
@@ -444,7 +230,9 @@ RUN set -eu; \
         grep -q 'USE_GAME_ABI_HACK 1' /src/build-i386/config.h \
             && { echo 'game-abi-hack should be off but is on'; exit 1; } || true; \
     fi; \
-    echo "q2proded OK (ELF32, game-abi-hack=$GAME_ABI_HACK)"
+    grep -qa 'sv_status_show_bots' /out/q2proded \
+        || { echo 'bot-status patch did not reach the binary'; exit 1; }; \
+    echo "q2proded OK (ELF32, game-abi-hack=$GAME_ABI_HACK, bot-status patched)"
 
 # q2admin's own Makefile defaults to its vendored, prebuilt i386 static libs
 # (deps/i386/{curl,zlib,openssl}) - convenient, but its openssl archive links
@@ -483,67 +271,268 @@ RUN set -eu; \
         && { echo 'q2admin gamei386.so has a TEXTREL - dynamic linking of openssl/zlib must have regressed'; exit 1; } || true; \
     echo "q2admin gamei386.so OK (ELF32, no TEXTREL)"
 
-# openffa-xatrix's own Makefile: CPU=i386 alone picks the output filename
-# (game$(CPU).so, no revision suffix - unlike q2admin's, no TARGET override
-# needed), and REV/VER are derived from git automatically. Its own build
-# already runs `ldd -r` on the result as a post-link undefined-symbol check
-# (see the LIBTOOL var in its Makefile).
-RUN git clone "$OPENFFA_REPO" /src-openffa && \
-    cd /src-openffa && \
-    git checkout --detach "$OPENFFA_COMMIT" && \
-    make CPU=i386 CC="gcc -m32" CONFIG_SQLITE="$OPENFFA_CONFIG_SQLITE" && \
-    install -Dm755 gamei386.so /out/gamei386.real.so
+# ---------------------------------------------------------------------------
+# The colosseum game library                                 (--target colosseum)
+# ---------------------------------------------------------------------------
+# FROM build, so the engine and the toolchain above are REUSED rather than
+# compiled a second time.  Until 2026-09-18 this lived in its own
+# Dockerfile-colosseum which cloned and built q2pro all over again, from the
+# same repo at the same pinned commit, to get an engine for the mesh harness.
+#
+# THE SOURCE ARRIVES AS A NAMED BUILD CONTEXT, not a `git clone`, because the
+# colosseum repository is PRIVATE and the pinned clones above cannot
+# authenticate:
+#
+#   docker build --target colosseum \
+#       --build-context colosseum-src=/home/nils/projects/colosseum \
+#       -t colosseum .
+#
+# THAT CONTEXT USED TO BE THIS TARGET'S ALONE, AND IS NOT ANY MORE.  BuildKit
+# resolves a named context only when a stage being built references it, so
+# `--target server` once built with no colosseum clone present and no extra
+# flags -- verified, not assumed -- and that was the whole reason the two
+# Dockerfiles could be merged without the live server image growing a
+# dependency on a private repo.  The engine patches ended it: the shared build
+# stage above reads `server/q2pro/` out of this same context, so BOTH targets
+# now need the flag.  Recorded rather than quietly dropped, because the
+# property was load-bearing when it was true.
+#
+# Omitting the flag on this target fails with `failed to resolve source
+# metadata for docker.io/library/colosseum-src`, which reads like a missing
+# image rather than a missing flag.  It means the --build-context above.
+FROM build AS colosseum-build
 
-# Fail the build rather than silently ship a build missing the one feature
-# this whole stage exists for - exactly how the stale 2017 binary went
-# unnoticed for years.
-RUN set -eu; \
-    readelf -h /out/gamei386.real.so | grep -q 'ELF32' || { echo 'openffa gamei386.real.so is not ELF32'; exit 1; }; \
-    strings /out/gamei386.real.so | grep -q '^g_warmup$' \
-        || { echo 'openffa gamei386.real.so is missing g_warmup - wrong commit pinned?'; exit 1; }; \
-    if [ -n "$OPENFFA_CONFIG_SQLITE" ]; then \
-        readelf -d /out/gamei386.real.so | grep -q 'libsqlite3\.so' \
-            || { echo 'CONFIG_SQLITE was requested but gamei386.real.so is not linked against libsqlite3'; exit 1; }; \
-        strings /out/gamei386.real.so | grep -q '^g_sql_database$' \
-            || { echo 'CONFIG_SQLITE was requested but g_sql_database cvar is missing from the binary'; exit 1; }; \
-    fi; \
-    echo "openffa gamei386.real.so OK (ELF32, has g_warmup, sqlite=${OPENFFA_CONFIG_SQLITE:-off})"
+# python3 for colosseum's own contract audits, which its Makefile runs as part
+# of the build; the shim for its CC_LINUX32.  Installed HERE rather than in the
+# shared stage above so that stage stays byte-identical for the server target.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 && \
+    rm -rf /var/lib/apt/lists/*
 
-# rocketarena2's Makefile targets a workstation build (native ARCH=x86_64 by
-# default, real "make windows" MinGW cross-targets too) - none of its six
-# stock configurations produce the i386 Linux .so this project needs. M32=
-# -m32 forces every compile+link step to -m32 (same mechanism as q2admin/
-# openffa's CC="gcc -m32" above; this Makefile threads the flag through a
-# dedicated var instead since it also has to compose with MinGW's CC
-# override). ARCH is cosmetic here - it only names the output file
-# (game$(ARCH).so) - set to i386 purely so the built filename matches this
-# project's convention; nothing reads it besides this install line, since
-# the file is renamed on the way out same as q2admin/openffa's builds are.
-# Output installed under a name distinct from openffa's above - both mods'
-# game DLLs are built into every image (harmless, a few extra seconds), but
-# only one is ever actually extracted into a given gamedir at deploy time.
-RUN git clone "$ROCKETARENA2_REPO" /src-ra2 && \
-    cd /src-ra2 && \
-    git checkout --detach "$ROCKETARENA2_COMMIT" && \
-    make build_release M32=-m32 ARCH=i386 && \
-    install -Dm755 release/gamei386.so /out/ra2-gamei386.real.so
-
-# Fail the build rather than ship a silently-wrong engine, same reasoning as
-# every other build-validation step above. statsfile/statsname are cvars
-# unique to this port's local JSON stats log (see the ROCKETARENA2_COMMIT
-# ARG comment) - a genuinely old/unmodified RA2 binary wouldn't have them,
-# so this also catches an accidental wrong-commit/wrong-branch pin, the same
-# failure mode the g_warmup check above exists to catch for openffa.
-RUN set -eu; \
-    readelf -h /out/ra2-gamei386.real.so | grep -q 'ELF32' || { echo 'rocketarena2 gamei386.real.so is not ELF32'; exit 1; }; \
-    strings /out/ra2-gamei386.real.so | grep -q '^statsfile$' \
-        || { echo 'rocketarena2 gamei386.real.so is missing statsfile - wrong commit/branch pinned?'; exit 1; }; \
-    echo "rocketarena2 gamei386.real.so OK (ELF32, has statsfile)"
+# A one-line i686-linux-gnu-gcc, so colosseum's Makefile finds the compiler it
+# names without being told about it.  `make linux32 CC_LINUX32="gcc -m32"` is
+# the obvious alternative and DOES NOT WORK: the linux32 recipe passes the
+# value on to a recursive make unquoted, as `CC=gcc -m32`, where make parses
+# -m32 as its own option and dies with `invalid option -- '3'`.  A shim keeps
+# the compiler a single word, which is what that recipe requires.
+RUN printf '%s\n' '#!/bin/sh' 'exec gcc -m32 "$@"' > /usr/local/bin/i686-linux-gnu-gcc && \
+    chmod 755 /usr/local/bin/i686-linux-gnu-gcc && \
+    i686-linux-gnu-gcc --version | head -1
 
 # ---------------------------------------------------------------------------
-# Runtime stage
+# The game library
 # ---------------------------------------------------------------------------
-FROM debian:trixie-slim
+# The whole clone, `.git` included, so the build can record which commit it is.
+#
+# --from=colosseum-src, NOT the build context: this file's context is the
+# q2server-dockerfile repo, and a bare `COPY .` here silently copies THAT in
+# and then fails several layers later inside `make linux32`, which is exactly
+# what it did the first time these two Dockerfiles were merged.
+COPY --from=colosseum-src . /src-colosseum
+
+# `make linux32` builds debug AND release into separate directories; release is
+# the one installed.  The contract audits and the g_ptrs.c freshness check run
+# as part of the build (not on request), so a finding fails this layer the way
+# a compiler warning does -- warnings are -Werror in that Makefile.
+#
+# No `--recurse-submodules` is needed and none is available here: the botlib is
+# a submodule, and nothing in the game library depends on it at compile time.
+# Bots are deliberately not part of these test servers -- see the note further
+# down about AAS files.
+RUN set -eu; \
+    mkdir -p /out-colosseum; \
+    cd /src-colosseum; \
+    git rev-parse HEAD > /out-colosseum/commit 2>/dev/null \
+        || echo 'unknown (context had no .git)' > /out-colosseum/commit; \
+    echo "building colosseum $(cat /out-colosseum/commit)"; \
+    make linux32; \
+    install -Dm755 release-linux32/gamei386.so /out-colosseum/gamei386.so
+
+RUN set -eu; \
+    readelf -h /out-colosseum/gamei386.so | grep -q 'ELF32' \
+        || { echo 'colosseum gamei386.so is not ELF32'; exit 1; }; \
+    readelf --dyn-syms -W /out-colosseum/gamei386.so | grep -q ' GetGameAPI$' \
+        || { echo 'colosseum gamei386.so does not export GetGameAPI'; exit 1; }; \
+    strings /out-colosseum/gamei386.so | grep -q '^g_ruleset$' \
+        || { echo 'colosseum gamei386.so has no g_ruleset cvar - wrong tree built?'; exit 1; }; \
+    # One distinctive cvar per donor, rather than the seven ruleset NAMES: four
+    # of those are under four characters and `strings` has a four-character
+    # minimum, so `dm`, `sp`, `tdm` and `ctf` can never appear in its output
+    # however complete the binary is.  These stand in for the same thing --
+    # that every merged donor's code is actually linked in: arenacfg is RA2's,
+    # bots_minplayers is OSP tourney's and the bot layer's, capturelimit is
+    # Threewave's, g_ruleset is the resolution layer's.
+    #
+    # The two CONTENT LAYER cvars, `xatrix` and `rogue`, are deliberately not
+    # in this list: neither appears as a standalone string in the binary (the
+    # compiler pools them into longer literals), so asserting on them fails on
+    # a perfectly good library.  `sv ruleset` reports the layers at runtime and
+    # the boot test is what checks them.
+    for sym in g_ruleset arenacfg bots_minplayers capturelimit minimumplayers botfill; do \
+        strings /out-colosseum/gamei386.so | grep -qx "$sym" \
+            || { echo "cvar '$sym' missing from the binary - a donor did not link in?"; exit 1; }; \
+    done; \
+    echo '--- shared libraries it needs ---'; \
+    readelf -d /out-colosseum/gamei386.so | grep NEEDED; \
+    echo "colosseum gamei386.so OK (ELF32, exports GetGameAPI, every donor linked in)"
+
+# ---------------------------------------------------------------------------
+# The botlib, its assets, and the map-prep tool
+# ---------------------------------------------------------------------------
+# The bot AI is NOT part of the game library: it is a separate shared object,
+# `gladiator.so`, dlopen'd by name out of the gamedir and entered through
+# GetBotAPI.  It comes from colosseum's own submodule, so it is pinned by the
+# colosseum checkout rather than by an ARG here, and it must be built for the
+# same platform as the game library -- the loader says so when the bitness does
+# not match.
+#
+# YQ2_ARCH=i386 is not optional.  Left alone, that submodule reads the
+# architecture off `uname -m`, which on this builder is x86_64, and it would
+# emit a 64-bit object the 32-bit game library cannot load.
+#
+# CC is the shim rather than `gcc -m32` for the same reason the game library
+# uses it: `botlib:` re-enters make, and a CC carrying a space does not survive
+# that intact.
+RUN set -eu; \
+    cd /src-colosseum/vendor/gladiator-bot-restored; \
+    [ -f Makefile ] || { echo 'the gladiator-bot-restored submodule is not checked out in the build context - run: git -C <clone> submodule update --init'; exit 1; }; \
+    make botlib CC=i686-linux-gnu-gcc YQ2_ARCH=i386; \
+    install -Dm755 release/gladiator.so /out-colosseum/gladiator.so; \
+    install -Dm644 assets/pak7.pak     /out-colosseum/pak7.pak; \
+    install -Dm644 assets/bots.cfg     /out-colosseum/bots.cfg; \
+    install -Dm755 tools/vendor/bspc/bspc-linux-x86 /out-colosseum/bspc
+
+RUN set -eu; \
+    readelf -h /out-colosseum/gladiator.so | grep -q 'ELF32' \
+        || { echo 'gladiator.so is not ELF32 - YQ2_ARCH did not take'; exit 1; }; \
+    readelf --dyn-syms -W /out-colosseum/gladiator.so | grep -q ' GetBotAPI$' \
+        || { echo 'gladiator.so does not export GetBotAPI - the game could dlopen it and find nothing'; exit 1; }; \
+    readelf -h /out-colosseum/bspc | grep -q 'ELF32' || { echo 'bspc is not ELF32'; exit 1; }; \
+    echo "botlib OK (ELF32, exports GetBotAPI); pak7.pak $(stat -c%s /out-colosseum/pak7.pak) bytes, bots.cfg $(grep -c . /out-colosseum/bots.cfg) lines, bspc staged"
+
+# ---------------------------------------------------------------------------
+# The colosseum runtime                                      (--target colosseum)
+# ---------------------------------------------------------------------------
+# NOT a production server: nothing runs from this image on the live host. It is
+# how the game library REACHES production -- scripts/deploy-colosseum-live.sh
+# copies the four artifacts below out of it and installs them into the
+# bind-mounted gamedir, because q2admin dlopens <gamedir>/gamei386.real.so and
+# baking a game library into the server image would silently overwrite the
+# operator's deliberate version choice on every container start.
+#
+# It is also the throwaway server scripts/make-colosseum-aas.sh runs to compute
+# navigation meshes, which is why it carries an engine and a CMD at all.
+FROM debian:trixie-slim AS colosseum
+
+# Which gamedir under the bind-mounted /opt/quake2 this container runs, which
+# config it execs, and where it starts.  Every one of these is set per service
+# by the caller at `docker run` time; the defaults here are the arena one.
+#
+# THE GAMEDIR NAMES ARE THE LIVE ONES -- `arena` and `xatrix`, not the
+# `colosseum` colosseum's own install instructions assume.  The name is not
+# private to the server: it is the path clients download content under and what
+# the existing per-server configs and custom maps sit in, so an eventual
+# migration that renamed it would be a content migration rather than a library
+# swap.  Isolation comes from the BASEDIR instead: compose mounts
+# ~/quake2-colosseum-server here, a self-contained tree with its own baseq2, and
+# the live ~/quake2 is never mounted into these containers at all.
+ENV Q2_GAMEDIR="arena"
+ENV Q2_IP="localhost"
+ENV Q2_PORT="27920"
+ENV Q2_SERVER_CFG="test-server.cfg"
+ENV Q2_MAP="ra2map1"
+
+# Same as the live images: the host runs Europe/Berlin and a container left on
+# UTC shows the wrong time in-game (xatrix's func_clock is how that was found).
+ENV TZ=Europe/Berlin
+
+RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections && \
+    dpkg --add-architecture i386 && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends libc6:i386 zlib1g:i386 tzdata && \
+    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
+    echo $TZ > /etc/timezone && \
+    dpkg-reconfigure -f noninteractive tzdata && \
+    apt-get -y autoclean && \
+    apt-get -y autoremove && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* /usr/share/locale/* \
+           /var/cache/debconf/*-old /usr/share/doc/*
+
+# UID 1000 matches the host's real `nils` login, so the process can write to its
+# bind-mounted gamedir (the console log, and the library install below).
+RUN useradd -r -u 1000 -U -s /sbin/nologin -M quake2
+RUN mkdir -p /opt/quake2 && chown quake2:quake2 /opt/quake2
+
+COPY --from=build /out/q2proded       /opt/q2pro/q2proded
+COPY --from=colosseum-build /out-colosseum/gamei386.so    /opt/colosseum/gamei386.so
+COPY --from=colosseum-build /out-colosseum/commit /opt/colosseum/commit
+# The bot stack.  gladiator.so, pak7.pak and bots.cfg are installed into the
+# gamedir on start exactly like the game library is; bspc is a tool, kept here
+# so `scripts/make-colosseum-aas.sh` can reach the 1999 map-prep binary without
+# anything being installed on the host.
+COPY --from=colosseum-build /out-colosseum/gladiator.so   /opt/colosseum/gladiator.so
+COPY --from=colosseum-build /out-colosseum/pak7.pak       /opt/colosseum/pak7.pak
+COPY --from=colosseum-build /out-colosseum/bots.cfg       /opt/colosseum/bots.cfg
+COPY --from=colosseum-build /out-colosseum/bspc           /opt/colosseum/bspc
+
+USER quake2
+WORKDIR /opt/quake2
+
+# THE LIBRARY IS INSTALLED INTO THE GAMEDIR AT EVERY START, and that is the one
+# real departure from the production Dockerfile.  There, the game library lives
+# in the bind-mounted gamedir and has to be re-extracted from a freshly built
+# image BY HAND after every rebuild -- `docker compose restart` reuses whatever
+# .so is already on disk and does not know the image changed.  Forgetting that
+# step crash-looped both live servers once already.  Copying it in on start
+# removes the step and the failure mode with it: the running library is always
+# the one in the image that started the container.  It is safe here because
+# these gamedirs are this test rig's own and nothing else writes them.
+#
+# No filter-rcon-status.sh: these servers are NOT public, so the WallFly master
+# -server bot never polls them and there is no rcon status spam to filter.  The
+# per-match timer lines it also drops are worth keeping on a test server.
+#
+# `map_override_path maps` is what makes `<gamedir>/maps/<name>.bsp.override`
+# work, and the live xatrix server's whole map rotation depends on it: those
+# files carry an OVERRIDE_NAME field, so a virtual map name redirects to a
+# different .bsp and supplies a replacement entity string --
+# `x1492annodomini` loads `maps/1492annodomini.bsp` with xatrix's entities in
+# it. Without this cvar those names do not resolve to anything at all. It is
+# q2pro's own feature (CM_LoadOverride), not a game-library one, so it works
+# the same under colosseum as under openffa, and it is inert in a gamedir that
+# has no override files -- which is why it is set here for both services
+# rather than per service. The production Dockerfile sets it too.
+#
+# `maps/` is created because that is where the botlib looks for its .aas
+# navigation meshes -- through its OWN file search, not the engine's, so a mesh
+# inside a pak would not be found.  One per map, made by
+# scripts/make-colosseum-aas.sh; without one the botlib loads, refuses the map
+# with "no AAS file available" and destroys every bot that wanted it, which
+# reads on the console as no bots at all.
+# pak7.pak keeps THAT NUMBER whatever else is installed -- it is the one pak in
+# colosseum's numbering that is never renumbered, and neither of these gamedirs
+# reaches 7 on its own (arena stops at 2, xatrix at 0), so there is no clash.
+CMD install -m 755 /opt/colosseum/gamei386.so /opt/quake2/$Q2_GAMEDIR/gamei386.so && \
+    install -m 755 /opt/colosseum/gladiator.so /opt/quake2/$Q2_GAMEDIR/gladiator.so && \
+    install -m 644 /opt/colosseum/pak7.pak /opt/quake2/$Q2_GAMEDIR/pak7.pak && \
+    install -m 644 -D /opt/colosseum/bots.cfg /opt/quake2/$Q2_GAMEDIR/botcfg/bots.cfg && \
+    mkdir -p /opt/quake2/$Q2_GAMEDIR/logs /opt/quake2/$Q2_GAMEDIR/maps && \
+    echo "colosseum $(cat /opt/colosseum/commit) -> $Q2_GAMEDIR" && \
+    script -qefc "stty -onlcr; /opt/q2pro/q2proded \
+        +set basedir /opt/quake2 +set libdir /opt/quake2 +set homedir /opt/quake2 \
+        +set dedicated 1 +set public 0 \
+        +set game $Q2_GAMEDIR \
+        +set ip $Q2_IP +set port $Q2_PORT +set net_port $Q2_PORT \
+        +set map_override_path maps \
+        +exec $Q2_SERVER_CFG +map $Q2_MAP" /dev/null 2>&1 \
+    | tee -a /opt/quake2/$Q2_GAMEDIR/logs/console.log
+
+# ---------------------------------------------------------------------------
+# The server runtime                             (--target server, the default)
+# ---------------------------------------------------------------------------
+# This is what the live containers run: the engine, q2admin, and nothing else.
+# The game library they load is NOT in here -- see the colosseum stage above.
+FROM debian:trixie-slim AS server
 
 ENV Q2_GAMEDIR="arena"
 ENV Q2_IP="localhost"
@@ -567,7 +556,7 @@ ENV TZ=Europe/Berlin
 RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections && \
     dpkg --add-architecture i386 && \
     apt-get update && \
-    apt-get install -y --no-install-recommends libc6:i386 zlib1g:i386 libssl3t64:i386 tzdata libsqlite3-0:i386 && \
+    apt-get install -y --no-install-recommends libc6:i386 zlib1g:i386 libssl3t64:i386 tzdata && \
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \
     echo $TZ > /etc/timezone && \
     dpkg-reconfigure -f noninteractive tzdata && \
@@ -587,24 +576,24 @@ RUN useradd -r -u 1000 -U -s /sbin/nologin -M quake2
 
 RUN mkdir -p /opt/quake2 && chown quake2:quake2 /opt/quake2
 
-# q2admin (and the real game DLL it wraps - openffa-xatrix for xatrix,
-# rocketarena2 for arena) land at /opt/q2admin, /opt/openffa and
-# /opt/rocketarena2, not directly in a gamedir: unlike q2proded, they have to
-# sit *inside* the bind-mounted gamedir at runtime (q2admin dlopens
-# "<gamedir>/gamei386.real.so" - or whatever "gamelibrary" names - relative
-# to the process CWD), so the image can't deliver them there directly, and
+# q2admin lands at /opt/q2admin rather than in a gamedir: unlike q2proded it
+# has to sit *inside* the bind-mounted gamedir at runtime (the engine loads
+# "<gamedir>/gamei386.so"), so the image cannot deliver it there directly, and
 # copying over the operator's file from an entrypoint on every start would
-# silently overwrite a deliberate version choice. Install into a gamedir
-# once, the same "one-time game data preparation" way as before:
+# silently overwrite a deliberate version choice. Install it into a gamedir
+# once:
 #   docker create --name q2admin-extract <image> && \
 #   docker cp q2admin-extract:/opt/q2admin/gamei386.so ~/quake2/<gamedir>/ && \
-#   docker cp q2admin-extract:/opt/openffa/gamei386.real.so ~/quake2/xatrix/ && \
-#   docker cp q2admin-extract:/opt/rocketarena2/gamei386.real.so ~/quake2/arena/ && \
 #   docker rm q2admin-extract
+#
+# The game library q2admin then loads as "gamei386.real.so" is NOT built here.
+# Both servers run colosseum, which the --target colosseum stage above builds
+# (from a named build context, because that repo is private and the pinned
+# clones here cannot authenticate) and scripts/deploy-colosseum-live.sh
+# installs. openffa-xatrix
+# and rocketarena2 were built here until 2026-09-18 and are gone with them.
 COPY --from=build /out/q2proded /opt/q2pro/q2proded
 COPY --from=build /out/gamei386.so /opt/q2admin/gamei386.so
-COPY --from=build /out/gamei386.real.so /opt/openffa/gamei386.real.so
-COPY --from=build /out/ra2-gamei386.real.so /opt/rocketarena2/gamei386.real.so
 COPY filter-rcon-status.sh /opt/filter-rcon-status.sh
 
 USER quake2

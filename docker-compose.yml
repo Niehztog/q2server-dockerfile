@@ -1,24 +1,51 @@
+# ONE IMAGE FOR BOTH GAME SERVERS.  There were two, q2pro-arena and
+# q2pro-xatrix, because GAME_ABI_HACK is a whole-binary compile-time switch
+# and the two mods then in use needed opposite settings: arena's 2014 Rocket
+# Arena 2 binary wanted the old callee-pops convention for gi.trace(), and
+# xatrix's 2017 openffa build crashed if it was compiled in.  Both servers
+# moved to colosseum on 2026-09-18 -- one modern-gcc build, one convention --
+# so the two images had become byte-identical but for their build timestamp.
+# Verified before collapsing them: q2admin's gamei386.so matched exactly and
+# q2proded differed in 32 bytes of GNU build-ID and nothing else.
+#
+# What was ever per-server is the ENVIRONMENT below, not the image: gamedir,
+# port, and which override cfg to exec.  If a future mod ever needs the abi
+# hack again, split this back into two images rather than flipping the arg --
+# the engine and the game library must always agree.
+x-q2pro-build: &q2pro-build
+  context: /home/nils/projects/q2server-dockerfile
+  dockerfile: Dockerfile
+  # The engine-and-q2admin target. The same Dockerfile also builds the
+  # colosseum game library under --target colosseum, out of the same named
+  # context declared below.
+  target: server
+  # THE COLOSSEUM CLONE, WHICH THIS TARGET ALSO NEEDS NOW.  It is the source
+  # for the game library under --target colosseum, and for this target it is
+  # where the ENGINE PATCHES come from: colosseum/server/q2pro/, applied to
+  # q2proded so that the game's bots are reported as players instead of the
+  # server advertising itself empty with eight of them playing.
+  #
+  # Until that patch this target resolved no named context at all and built
+  # with no colosseum clone present -- see the corrected note on the colosseum
+  # target in the Dockerfile.  Needs Compose v2.17 or newer.
+  additional_contexts:
+    colosseum-src: /home/nils/projects/colosseum
+  args:
+    # Both servers run colosseum, built by this same Dockerfile under
+    # --target colosseum with a modern gcc and installed into the gamedir as gamei386.real.so by
+    # scripts/deploy-colosseum-live.sh, so the engine must use the modern
+    # caller-pops convention for gi.trace().
+    #
+    # Learned the hard way on 2026-08-19, when a freshly-compiled game
+    # library met an engine still built with 'enabled': immediate SIGSEGV on
+    # server init, right after the MOTD loads, confirmed via gdb against the
+    # actual core dump.
+    GAME_ABI_HACK: 'disabled'
+
 services:
   q2pro-arena:
-    build:
-      context: /home/nils/projects/q2server-dockerfile
-      dockerfile: Dockerfile
-      args:
-        # arena's gamei386.real.so is Niehztog/rocketarena2's
-        # q2pro-enhancements build (2026-08-19) - fresh-compiled with this
-        # Dockerfile's own modern gcc, same convention as xatrix, not the
-        # retired 2014 binary's. See Dockerfile for the full mechanism and
-        # the arena-assignment regression this replacement fixes.
-        #
-        # Learned the hard way while testing this exact switch: building
-        # this image WITHOUT also flipping this value (i.e. testing the new
-        # RA2 binary against an engine still built with 'enabled') produces
-        # an immediate SIGSEGV on server init, right after the MOTD loads -
-        # confirmed via gdb against the actual core dump, not just inferred.
-        # The two must always change together - never rebuild/deploy one
-        # side of this without the other.
-        GAME_ABI_HACK: 'disabled'
-    image: q2pro-arena
+    build: *q2pro-build
+    image: q2pro-server
     environment:
       Q2_GAMEDIR: 'arena'
       Q2_OVERRIDE_CFG: 'q2pro-override-arena.cfg'
@@ -37,15 +64,8 @@ services:
         max-size: "10m"
         max-file: "3"
   q2pro-xatrix:
-    build:
-      context: /home/nils/projects/q2server-dockerfile
-      dockerfile: Dockerfile
-      args:
-        # xatrix's gamei386.real.so (2017) expects the MODERN convention and
-        # crashes if the abi hack is compiled in. Stated explicitly rather
-        # than relying on the default.
-        GAME_ABI_HACK: 'disabled'
-    image: q2pro-xatrix
+    build: *q2pro-build
+    image: q2pro-server
     environment:
       Q2_GAMEDIR: 'xatrix'
       Q2_OVERRIDE_CFG: 'q2pro-override-xatrix.cfg'
